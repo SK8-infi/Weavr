@@ -1,7 +1,9 @@
 import { useState } from 'react';
-import { GitBranch, FolderOpen, ArrowRight, Check, Search, ExternalLink } from 'lucide-react';
+import { GitBranch, ArrowRight, Check, Search } from 'lucide-react';
 import Button from '../common/Button';
+import RepoSyncModal from './RepoSyncModal';
 import { useProject } from '../../context/ProjectContext';
+import { syncAndLaunchRepo } from '../../services/repoLifecycleService';
 
 const MOCK_USER_REPOS = [
   {
@@ -33,7 +35,9 @@ const MOCK_USER_REPOS = [
 export default function ImportRepoStep() {
   const { importRepository, githubUser } = useProject();
   const [selectedRepo, setSelectedRepo] = useState(MOCK_USER_REPOS[0]);
-  const [loading, setLoading] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncStep, setSyncStep] = useState(1);
+  const [syncMessage, setSyncMessage] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
 
   const filteredRepos = MOCK_USER_REPOS.filter(
@@ -43,10 +47,16 @@ export default function ImportRepoStep() {
   );
 
   const handleLaunchStudio = async () => {
-    setLoading(true);
-    await new Promise((r) => setTimeout(r, 800));
-    importRepository(selectedRepo);
-    setLoading(false);
+    setIsSyncing(true);
+    const result = await syncAndLaunchRepo(selectedRepo, ({ step, message }) => {
+      setSyncStep(step);
+      setSyncMessage(message);
+    });
+
+    setIsSyncing(false);
+    if (result.success) {
+      importRepository(selectedRepo);
+    }
   };
 
   return (
@@ -121,7 +131,7 @@ export default function ImportRepoStep() {
                       </h3>
                       {repo.isTemplate && (
                         <span className="text-[9px] font-mono font-bold bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded-md border border-amber-500/30">
-                          Weavr Template Compatible
+                          Automated Sync Enabled
                         </span>
                       )}
                     </div>
@@ -154,11 +164,19 @@ export default function ImportRepoStep() {
           size="lg"
           icon={ArrowRight}
           onClick={handleLaunchStudio}
-          disabled={loading}
+          disabled={isSyncing}
           className="w-full justify-center py-3 text-sm"
         >
-          <span>{loading ? 'Launching Studio Workspace...' : 'Open in Weavr Visual Studio'}</span>
+          <span>{isSyncing ? 'Syncing & Launching Engine...' : 'Sync Repository & Launch Studio'}</span>
         </Button>
+
+        {/* Automated Sync Pipeline Progress Modal */}
+        <RepoSyncModal
+          isOpen={isSyncing}
+          currentStep={syncStep}
+          stepMessage={syncMessage}
+          repoName={selectedRepo.name}
+        />
       </div>
     </div>
   );
