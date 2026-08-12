@@ -48,14 +48,22 @@ export default function ImportRepoStep() {
 
   const handleLaunchStudio = async () => {
     setIsSyncing(true);
+    setSyncStep(1);
+    setSyncMessage('Initializing pipeline...');
+
     const result = await syncAndLaunchRepo(selectedRepo, ({ step, message }) => {
       setSyncStep(step);
       setSyncMessage(message);
     });
 
-    setIsSyncing(false);
     if (result.success) {
+      setSyncStep(5);
+      setSyncMessage('✓ Workspace Ready! Opening Weavr Studio...');
+      await new Promise((r) => setTimeout(r, 1000));
+      setIsSyncing(false);
       importRepository(selectedRepo);
+    } else {
+      setIsSyncing(false);
     }
   };
 

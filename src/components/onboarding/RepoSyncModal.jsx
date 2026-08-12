@@ -29,7 +29,7 @@ export default function RepoSyncModal({ isOpen, currentStep, stepMessage, repoNa
         {/* Step-by-Step Progress Timeline */}
         <div className="space-y-3 bg-neutral-950 p-4 rounded-2xl border border-neutral-800">
           {steps.map((s) => {
-            const isCompleted = currentStep > s.id;
+            const isCompleted = currentStep > s.id || currentStep >= 5;
             const isCurrent = currentStep === s.id;
 
             return (
