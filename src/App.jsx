@@ -1,6 +1,9 @@
 import { useState } from 'react';
-import { ProjectProvider } from './context/ProjectContext';
+import { ProjectProvider, useProject } from './context/ProjectContext';
 import { RegistryProvider } from './context/RegistryContext';
+
+import ConnectGithubStep from './components/onboarding/ConnectGithubStep';
+import ImportRepoStep from './components/onboarding/ImportRepoStep';
 
 import VisualToolbar from './components/editor/VisualToolbar';
 import VisualCanvas from './components/editor/VisualCanvas';
@@ -8,10 +11,22 @@ import BlockDrawer from './components/editor/BlockDrawer';
 
 import './App.css';
 
-function WordPressEditorShell() {
+function WeavrMainApp() {
+  const { setupStep } = useProject();
   const [viewportMode, setViewportMode] = useState('desktop'); // 'desktop' | 'tablet' | 'mobile'
   const [isBlockDrawerOpen, setIsBlockDrawerOpen] = useState(false);
 
+  // Step 1: Connect GitHub
+  if (setupStep === 'connect_github') {
+    return <ConnectGithubStep />;
+  }
+
+  // Step 2: Import Repository
+  if (setupStep === 'import_repo') {
+    return <ImportRepoStep />;
+  }
+
+  // Step 3: WordPress / Elementor Visual Studio Canvas
   return (
     <div className="h-screen w-screen flex flex-col bg-neutral-950 text-neutral-100 font-sans text-xs select-none">
       {/* 1. WordPress Top Floating Admin Bar */}
@@ -42,7 +57,7 @@ export default function App() {
   return (
     <ProjectProvider>
       <RegistryProvider>
-        <WordPressEditorShell />
+        <WeavrMainApp />
       </RegistryProvider>
     </ProjectProvider>
   );

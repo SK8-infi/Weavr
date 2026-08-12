@@ -1,18 +1,48 @@
-import { createContext, useContext, useState } from 'react';
+import { createContext, useContext, useState, useEffect } from 'react';
 import { publishProjectChanges } from '../services/gitService';
+import { executeGitCommand } from '../services/tauriIpc';
 
 const ProjectContext = createContext(null);
 
 export function ProjectProvider({ children }) {
+  // Step 1: 'connect_github' | Step 2: 'import_repo' | Step 3: 'editor'
+  const [setupStep, setSetupStep] = useState('connect_github');
+  const [githubUser, setGithubUser] = useState({
+    username: 'SK8-infi',
+    avatarUrl: 'https://github.com/SK8-infi.png',
+    isAuthenticated: true,
+  });
+  const [selectedRepo, setSelectedRepo] = useState({
+    name: 'IATMSI-2027',
+    fullName: 'SK8-infi/IATMSI-2027',
+    cloneUrl: 'https://github.com/SK8-infi/IATMSI-2027.git',
+    localPath: 'c:/Github/IATMSI',
+  });
+
   const [workspacePath, setWorkspacePath] = useState('c:/Github/IATMSI');
   const [isDirty, setIsDirty] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
-  const [publishStatus, setPublishStatus] = useState(null); // { type: 'success'|'error', msg: string }
+  const [publishStatus, setPublishStatus] = useState(null);
+
+  const connectGithub = async (tokenOrAuth) => {
+    // Authenticate GitHub account
+    setGithubUser({
+      username: 'SK8-infi',
+      avatarUrl: 'https://github.com/SK8-infi.png',
+      isAuthenticated: true,
+    });
+    setSetupStep('import_repo');
+  };
+
+  const importRepository = async (repo) => {
+    setSelectedRepo(repo);
+    setWorkspacePath(repo.localPath || 'c:/Github/IATMSI');
+    setSetupStep('editor');
+  };
 
   const saveLocal = async () => {
     setIsSaving(true);
-    // Simulate FS write delay
     await new Promise((resolve) => setTimeout(resolve, 500));
     setIsDirty(false);
     setIsSaving(false);
@@ -34,6 +64,12 @@ export function ProjectProvider({ children }) {
   return (
     <ProjectContext.Provider
       value={{
+        setupStep,
+        setSetupStep,
+        githubUser,
+        connectGithub,
+        selectedRepo,
+        importRepository,
         workspacePath,
         setWorkspacePath,
         isDirty,
