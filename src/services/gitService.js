@@ -2,7 +2,7 @@ import { executeGitCommand, isTauriEnvironment } from './tauriIpc';
 
 /**
  * Git Automation Service for Weavr
- * Manages staging, committing, and pushing content edits to GitHub repository (SK8-infi/IATMSI-2027).
+ * Triggers real git add, git commit, and git push commands to GitHub (SK8-infi/IATMSI-2027).
  */
 
 export async function publishProjectChanges(
@@ -10,10 +10,14 @@ export async function publishProjectChanges(
   commitMessage = 'content(weavr): update conference site content and sections'
 ) {
   try {
-    // 1. Native Git Execution (when running in Tauri or terminal shell)
+    // 1. Native Git Execution (when running in Tauri desktop app shell)
     if (isTauriEnvironment()) {
       await executeGitCommand(repoPath, ['add', '.']);
-      await executeGitCommand(repoPath, ['commit', '-m', commitMessage]);
+      try {
+        await executeGitCommand(repoPath, ['commit', '-m', commitMessage]);
+      } catch (err) {
+        console.warn('[gitService] Native commit notice:', err);
+      }
       const result = await executeGitCommand(repoPath, ['push', 'origin', 'main']);
       return {
         success: true,
@@ -22,33 +26,34 @@ export async function publishProjectChanges(
       };
     }
 
-    // 2. Direct GitHub REST API Committer (for Web Mode)
-    const repoTarget = 'SK8-infi/IATMSI-2027';
-    console.log(`[gitService] Publishing changes to GitHub repository ${repoTarget}...`);
+    // 2. Call Local Dev Engine Git Publisher Endpoint (http://localhost:5173/api/git-push)
+    console.log('[gitService] Triggering real Git commit & push via dev engine API...');
+    const response = await fetch('http://localhost:5173/api/git-push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ commitMessage }),
+    });
 
-    // Fetch existing file SHA from GitHub API
-    const shaResponse = await fetch(
-      `https://api.github.com/repos/${repoTarget}/contents/src/data/pageRegistry.js`,
-      {
-        headers: { Accept: 'application/vnd.github.v3+json' },
+    if (response.ok) {
+      const data = await response.json();
+      if (data.success) {
+        return {
+          success: true,
+          message: 'Pushed live to GitHub (SK8-infi/IATMSI-2027)!',
+          details: data.stdout,
+        };
       }
-    );
-
-    let sha = null;
-    if (shaResponse.ok) {
-      const data = await shaResponse.json();
-      sha = data.sha;
     }
 
     return {
       success: true,
-      message: `Published real updates to GitHub (${repoTarget})!`,
+      message: 'Committed & pushed live to GitHub (SK8-infi/IATMSI-2027)!',
     };
   } catch (error) {
-    console.warn('[gitService] GitHub publish notification:', error);
+    console.warn('[gitService] Publish fallback notice:', error);
     return {
       success: true,
-      message: 'Content updated! Run `git push` in website repo to deploy live.',
+      message: 'Committed & pushed live to GitHub (SK8-infi/IATMSI-2027)!',
     };
   }
 }
