@@ -320,6 +320,9 @@
           new MouseEvent("click", { bubbles: true, cancelable: true, view: window }),
         );
         replayingClick = false;
+        // Don't leave focus sitting on a link that the navigation is about to
+        // remove from the page.
+        anchor.blur?.();
       }
       return;
     }
@@ -333,9 +336,11 @@
   let refreshQueued = false;
   function queueRefresh() {
     if (refreshQueued) return;
-    // Typing mutates the DOM on every keystroke; rescanning the page mid-edit
-    // is wasted work, and the element being edited is already adopted.
-    if (document.activeElement?.hasAttribute?.(EDITABLE_ATTR)) return;
+    // Deliberately no "skip while an editable is focused" check here. Focus
+    // lingers on a link after it is clicked, so such a check silently stops
+    // every later refresh and a page navigated to never becomes editable.
+    // Rescanning during typing is harmless: already-adopted elements are
+    // skipped, and the work is bounded by the longest known value.
     refreshQueued = true;
     // setTimeout rather than requestAnimationFrame: the preview window is
     // frequently occluded by the Weavr dashboard, and rAF does not fire in a
