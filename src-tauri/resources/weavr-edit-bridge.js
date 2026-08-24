@@ -210,6 +210,11 @@
       element.dataset.weavrOriginal = normalize(savedValue);
     },
 
+    /** True once Weavr has sent this page its editable values. */
+    hasValues() {
+      return valueIndex.size > 0;
+    },
+
     /** Rolls the element back if Rust rejected the write. */
     rejectSave(fieldId) {
       const element = document.querySelector(`[${EDITABLE_ATTR}="${CSS.escape(fieldId)}"]`);
@@ -220,4 +225,21 @@
       }
     },
   };
+
+  // Announce ourselves so Weavr sends the current values. This is what makes
+  // the page editable on first load and again after every reload — a dev-server
+  // reload wipes the values we were given, and the page can come up before
+  // Weavr has finished reading the project, so we ask rather than wait to be
+  // told. Retried briefly because the Tauri bridge may not be attached yet.
+  (function announce() {
+    let attempts = 0;
+    const tell = () => {
+      if (window.__TAURI__?.event?.emit) {
+        emit("weavr://bridge-ready", {});
+        return;
+      }
+      if (attempts++ < 100) setTimeout(tell, 50);
+    };
+    tell();
+  })();
 })();

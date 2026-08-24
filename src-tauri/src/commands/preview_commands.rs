@@ -1,63 +1,63 @@
 use std::path::PathBuf;
 
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager};
 
 use crate::error::{AppError, AppResult};
+use crate::layout;
 use crate::nodejs::preview_server;
 use crate::state::AppState;
-
-pub const PREVIEW_WINDOW_LABEL: &str = "preview";
 
 /// Injected into the previewed site so it becomes click-to-editable. The site
 /// itself ships none of this — that's what lets Weavr work on an unmodified
 /// repo.
 const EDIT_BRIDGE_JS: &str = include_str!("../../resources/weavr-edit-bridge.js");
 
-/// Starts the project's dev server and shows it in a dedicated webview window.
-///
-/// A separate window (rather than an iframe inside the dashboard) is what lets
-/// Weavr inject the edit bridge: the dev server runs on its own localhost
-/// port, so an iframe would be cross-origin and injection would be blocked.
+/// Starts the project's dev server and docks it beside the editing panel.
 #[tauri::command]
 pub async fn preview_start(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
     project_path: String,
 ) -> AppResult<String> {
-    let url = preview_server::start(&app, &PathBuf::from(project_path)).await?;
+    let path = PathBuf::from(&project_path);
+    let url = preview_server::start(&app, &path).await?;
 
-    let parsed = url
-        .parse()
-        .map_err(|e| AppError::Other(format!("preview URL {url} was not valid: {e}")))?;
+    // Make sure the content index exists before the preview asks for it.
+    // Without this the preview can come up first and be handed nothing, and
+    // the site silently isn't clickable.
+    ensure_index_loaded(&state, &path)?;
 
-    let window = match app.get_webview_window(PREVIEW_WINDOW_LABEL) {
-        Some(existing) => {
-            existing
-                .navigate(parsed)
-                .map_err(|e| AppError::Other(e.to_string()))?;
-            existing
-        }
-        None => WebviewWindowBuilder::new(&app, PREVIEW_WINDOW_LABEL, WebviewUrl::External(parsed))
-            .title("Preview — your website")
-            .inner_size(1280.0, 900.0)
-            // Runs on every page load, including a full reload after Vite
-            // restarts, so the bridge survives navigation.
-            .initialization_script(EDIT_BRIDGE_JS)
-            .build()
-            .map_err(|e| AppError::Other(e.to_string()))?,
-    };
-
-    let _ = window.set_focus();
-    push_editable_values(&window, &state)?;
+    layout::show_preview(&app, &url, EDIT_BRIDGE_JS)?;
+    push_editable_values(&app)?;
 
     Ok(url)
 }
 
-/// Hands the preview page the value -> field-id list it matches text against.
-pub fn push_editable_values(
-    window: &WebviewWindow,
-    state: &tauri::State<'_, AppState>,
-) -> AppResult<()> {
+fn ensure_index_loaded(state: &tauri::State<'_, AppState>, root: &PathBuf) -> AppResult<()> {
+    let mut project = state.project.lock().unwrap();
+    let already_loaded = project
+        .as_ref()
+        .is_some_and(|session| &session.root == root);
+    if already_loaded {
+        return Ok(());
+    }
+    let index = crate::content::index::ContentIndex::build(root)?;
+    *project = Some(crate::state::ProjectSession::new(root.clone(), index));
+    Ok(())
+}
+
+/// Hands the preview the value -> field-id list it matches rendered text
+/// against.
+///
+/// Called whenever the index changes as well as on first load: an edit changes
+/// the very strings this map is keyed on, so a stale map would leave elements
+/// quietly non-editable after the first change.
+pub fn push_editable_values(app: &AppHandle) -> AppResult<()> {
+    let Some(preview) = app.get_webview(layout::PREVIEW_LABEL) else {
+        return Ok(());
+    };
+
+    let state = app.state::<AppState>();
     let project = state.project.lock().unwrap();
     let Some(session) = project.as_ref() else {
         return Ok(());
@@ -83,15 +83,13 @@ pub fn push_editable_values(
            }})();"#
     );
 
-    window
+    preview
         .eval(&script)
         .map_err(|e| AppError::Other(format!("could not install edit bridge: {e}")))
 }
 
 #[tauri::command]
 pub async fn preview_stop(app: AppHandle, project_path: String) -> AppResult<()> {
-    if let Some(window) = app.get_webview_window(PREVIEW_WINDOW_LABEL) {
-        let _ = window.close();
-    }
+    layout::hide_preview(&app)?;
     preview_server::stop(&app, &PathBuf::from(project_path)).await
 }

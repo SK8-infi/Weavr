@@ -41,11 +41,9 @@ export default function Dashboard({ user, onSignedOut }) {
     }
   }
 
-  // Once the preview is up, the editor takes over the whole window.
+  // Once the preview is docked, this webview becomes the editing panel.
   if (project?.info.is_valid && previewUrl) {
-    return (
-      <EditorView project={project} previewUrl={previewUrl} onBack={closeProject} />
-    );
+    return <EditorView project={project} onBack={closeProject} />;
   }
 
   return (

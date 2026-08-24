@@ -5,6 +5,7 @@ mod edit_bridge;
 mod error;
 mod git;
 mod github;
+mod layout;
 mod nodejs;
 mod paths;
 mod project;
@@ -27,6 +28,10 @@ pub fn run() {
         .manage(AppState::new())
         .manage(PreviewRegistry::default())
         .setup(|app| {
+            // The window and its two webviews are built here rather than in
+            // tauri.conf.json, because docking a child webview beside another
+            // is only expressible through the Rust API.
+            layout::build(app.handle())?;
             edit_bridge::register(app.handle());
             Ok(())
         })

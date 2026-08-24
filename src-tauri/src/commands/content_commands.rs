@@ -110,6 +110,7 @@ pub async fn content_editable_values(
 
 #[tauri::command]
 pub async fn content_update(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     field_id: String,
     new_value: String,
@@ -136,6 +137,10 @@ pub async fn content_update(
     // Rebuild so byte offsets and values reflect what's now on disk — the edit
     // shifted every span after it in that file.
     session.index = ContentIndex::build(&session.root)?;
+    drop(project);
+
+    // The preview matches on the old text until it's told otherwise.
+    crate::commands::preview_commands::push_editable_values(&app)?;
 
     Ok(())
 }

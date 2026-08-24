@@ -7,12 +7,14 @@
 use serde::Deserialize;
 use tauri::{AppHandle, Emitter, Listener, Manager};
 
-use crate::commands::preview_commands::PREVIEW_WINDOW_LABEL;
 use crate::content::index::ContentIndex;
+use crate::layout;
 use crate::content::writer;
 use crate::state::AppState;
 
 pub const TEXT_EDITED_EVENT: &str = "weavr://text-edited";
+/// The preview page announcing that its bridge is installed and wants values.
+pub const BRIDGE_READY_EVENT: &str = "weavr://bridge-ready";
 /// Emitted for the dashboard so it can refresh its content forms after an
 /// in-place edit.
 pub const CONTENT_CHANGED_EVENT: &str = "weavr://content-changed";
@@ -26,6 +28,13 @@ struct TextEditedPayload {
 }
 
 pub fn register(app: &AppHandle) {
+    // The preview asks for its values whenever its bridge loads — on first
+    // open and again after every dev-server reload, which wipes them.
+    let ready_handle = app.clone();
+    app.listen(BRIDGE_READY_EVENT, move |_event| {
+        let _ = crate::commands::preview_commands::push_editable_values(&ready_handle);
+    });
+
     let handle = app.clone();
 
     app.listen(TEXT_EDITED_EVENT, move |event| {
@@ -73,7 +82,7 @@ fn apply_edit(app: &AppHandle, field_id: &str, new_value: &str) -> Result<(), St
 }
 
 fn report_result(app: &AppHandle, payload: &TextEditedPayload, result: Result<(), String>) {
-    let Some(window) = app.get_webview_window(PREVIEW_WINDOW_LABEL) else {
+    let Some(preview) = app.get_webview(layout::PREVIEW_LABEL) else {
         return;
     };
 
@@ -82,18 +91,22 @@ fn report_result(app: &AppHandle, payload: &TextEditedPayload, result: Result<()
     match result {
         Ok(()) => {
             let value = serde_json::to_string(&payload.new_value).unwrap_or_else(|_| "\"\"".into());
-            let _ = window.eval(&format!(
+            let _ = preview.eval(&format!(
                 "window.__weavrEditBridge && window.__weavrEditBridge.confirmSaved({field}, {value});"
             ));
-            let _ = app.emit_to("main", CONTENT_CHANGED_EVENT, &payload.field_id);
+            // The edited string is the key the preview matches on, so refresh
+            // its map — otherwise that element stops being editable after one
+            // change.
+            let _ = crate::commands::preview_commands::push_editable_values(app);
+            let _ = app.emit_to(layout::PANEL_LABEL, CONTENT_CHANGED_EVENT, &payload.field_id);
         }
         Err(message) => {
             // Roll the on-screen text back so what the user sees always
             // matches what's actually saved.
-            let _ = window.eval(&format!(
+            let _ = preview.eval(&format!(
                 "window.__weavrEditBridge && window.__weavrEditBridge.rejectSave({field});"
             ));
-            let _ = app.emit_to("main", "weavr://edit-failed", message);
+            let _ = app.emit_to(layout::PANEL_LABEL, "weavr://edit-failed", message);
         }
     }
 }
