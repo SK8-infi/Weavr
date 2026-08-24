@@ -13,6 +13,7 @@ mod state;
 use commands::auth_commands::{auth_check_session, auth_sign_out, auth_start};
 use commands::content_commands::{content_editable_values, content_load, content_update};
 use commands::preview_commands::{preview_start, preview_stop};
+use commands::publish_commands::{publish_now, publish_pending};
 use commands::repo_commands::{repo_clone, repo_list};
 use commands::setup_commands::project_install;
 use nodejs::preview_server::{stop_all_blocking, PreviewRegistry};
@@ -40,7 +41,9 @@ pub fn run() {
             preview_stop,
             content_load,
             content_editable_values,
-            content_update
+            content_update,
+            publish_pending,
+            publish_now
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

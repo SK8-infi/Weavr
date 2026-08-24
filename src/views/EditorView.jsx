@@ -1,4 +1,5 @@
 import ContentPanel from "./ContentPanel";
+import PublishBar from "./PublishBar";
 import { invoke } from "../lib/tauri";
 
 export default function EditorView({ project, previewUrl, onBack }) {
@@ -24,8 +25,11 @@ export default function EditorView({ project, previewUrl, onBack }) {
       </header>
 
       <div className="flex min-h-0 flex-1">
-        <aside className="w-full max-w-md border-r border-canvas-200 bg-white">
-          <ContentPanel projectPath={info.local_path} />
+        <aside className="flex w-full max-w-md flex-col border-r border-canvas-200 bg-white">
+          <div className="min-h-0 flex-1">
+            <ContentPanel projectPath={info.local_path} />
+          </div>
+          <PublishBar />
         </aside>
 
         <div className="flex flex-1 items-center justify-center bg-canvas-100 px-8 text-center">
