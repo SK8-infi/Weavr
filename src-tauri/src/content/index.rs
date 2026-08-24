@@ -136,10 +136,39 @@ fn source_of(file: &str) -> String {
         .to_string()
 }
 
-/// Rendered HTML collapses whitespace, so compare on collapsed whitespace or
-/// nothing in a data file that wraps across lines would ever match.
-fn normalize(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
+/// Turns a stored value into the form the page actually renders.
+///
+/// Two differences to account for. HTML collapses whitespace, so a data string
+/// wrapped across lines must compare equal to the single line on screen. And
+/// content files mark emphasis inline (`**like this**`), which components strip
+/// when rendering — matching on the raw string would never find those.
+pub fn normalize(text: &str) -> String {
+    strip_emphasis(text)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Removes `**bold**` / `*italic*` markers, keeping the words between them.
+pub fn strip_emphasis(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+
+    while i < chars.len() {
+        if chars[i] == '*' {
+            let run = chars[i..].iter().take_while(|c| **c == '*').count();
+            // Only treat a run as a marker if it's one we emit ourselves.
+            if run <= 2 {
+                i += run;
+                continue;
+            }
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+
+    out
 }
 
 #[cfg(test)]
