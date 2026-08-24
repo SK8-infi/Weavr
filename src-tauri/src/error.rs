@@ -10,6 +10,12 @@ pub enum AppError {
     Keychain(#[from] keyring::Error),
     #[error("not signed in")]
     NotAuthenticated,
+    #[error("git error: {0}")]
+    Git(#[from] git2::Error),
+    #[error("filesystem error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("{0}")]
+    Other(String),
 }
 
 impl Serialize for AppError {
