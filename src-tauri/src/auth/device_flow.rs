@@ -26,7 +26,29 @@ pub enum PollOutcome {
 struct TokenResponse {
     access_token: Option<String>,
     error: Option<String>,
+    error_description: Option<String>,
     interval: Option<u64>,
+}
+
+/// GitHub reports device-flow problems in the response body, not the status
+/// line — a bare "status 400" hides the actual reason (app misconfigured,
+/// device flow switched off, unknown client id), so always surface the body.
+#[derive(Debug, Deserialize)]
+struct ErrorResponse {
+    error: Option<String>,
+    error_description: Option<String>,
+}
+
+fn describe_error(body: &str, status: reqwest::StatusCode) -> String {
+    match serde_json::from_str::<ErrorResponse>(body) {
+        Ok(parsed) => match (parsed.error_description, parsed.error) {
+            (Some(description), Some(code)) => format!("{description} ({code})"),
+            (Some(description), None) => description,
+            (None, Some(code)) => code,
+            (None, None) => format!("GitHub returned {status}"),
+        },
+        Err(_) => format!("GitHub returned {status}: {body}"),
+    }
 }
 
 pub async fn request_device_code(client: &reqwest::Client) -> AppResult<DeviceCode> {
@@ -37,14 +59,23 @@ pub async fn request_device_code(client: &reqwest::Client) -> AppResult<DeviceCo
         .send()
         .await?;
 
-    if !response.status().is_success() {
-        return Err(AppError::GitHub(format!(
-            "device code request failed with status {}",
-            response.status()
-        )));
+    let status = response.status();
+    let body = response.text().await?;
+
+    if !status.is_success() {
+        return Err(AppError::GitHub(describe_error(&body, status)));
     }
 
-    Ok(response.json::<DeviceCode>().await?)
+    // A 200 can still carry an error (e.g. device flow disabled), so check the
+    // body before trying to read a device code out of it.
+    if let Ok(parsed) = serde_json::from_str::<ErrorResponse>(&body) {
+        if parsed.error.is_some() {
+            return Err(AppError::GitHub(describe_error(&body, status)));
+        }
+    }
+
+    serde_json::from_str::<DeviceCode>(&body)
+        .map_err(|e| AppError::GitHub(format!("unexpected response from GitHub: {e}")))
 }
 
 pub async fn poll_once(client: &reqwest::Client, device_code: &str) -> AppResult<PollOutcome> {
@@ -72,7 +103,10 @@ pub async fn poll_once(client: &reqwest::Client, device_code: &str) -> AppResult
         }),
         Some("expired_token") => Ok(PollOutcome::ExpiredToken),
         Some("access_denied") => Ok(PollOutcome::AccessDenied),
-        Some(other) => Err(AppError::GitHub(format!("device flow error: {other}"))),
+        Some(other) => Err(AppError::GitHub(
+            body.error_description
+                .unwrap_or_else(|| format!("device flow error: {other}")),
+        )),
         None => Err(AppError::GitHub(
             "device flow response had neither a token nor an error".into(),
         )),
