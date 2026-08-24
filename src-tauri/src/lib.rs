@@ -1,5 +1,6 @@
 mod auth;
 mod commands;
+mod content;
 mod error;
 mod git;
 mod github;
