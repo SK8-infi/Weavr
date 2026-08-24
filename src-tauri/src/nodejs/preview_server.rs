@@ -62,18 +62,28 @@ fn reserve_port() -> AppResult<u16> {
     Ok(listener.local_addr()?.port())
 }
 
+/// The launcher is compiled into the binary and written out on demand rather
+/// than shipped as a bundle resource. It's a single small file we own, and
+/// materializing it here means it can never be missing from an installer or
+/// out of sync with the build.
+const LAUNCHER_SOURCE: &str = include_str!("../../resources/weavr-preview-server.mjs");
+
 fn launcher_script(app: &AppHandle) -> AppResult<PathBuf> {
-    let path = app
+    let dir = app
         .path()
-        .resource_dir()
-        .map_err(|e| AppError::Other(e.to_string()))?
-        .join("weavr-preview-server.mjs");
-    if !path.is_file() {
-        return Err(AppError::Other(format!(
-            "preview launcher missing at {}",
-            path.display()
-        )));
+        .app_data_dir()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+    std::fs::create_dir_all(&dir)?;
+
+    let path = dir.join("weavr-preview-server.mjs");
+    let needs_write = match std::fs::read_to_string(&path) {
+        Ok(existing) => existing != LAUNCHER_SOURCE,
+        Err(_) => true,
+    };
+    if needs_write {
+        std::fs::write(&path, LAUNCHER_SOURCE)?;
     }
+
     Ok(path)
 }
 

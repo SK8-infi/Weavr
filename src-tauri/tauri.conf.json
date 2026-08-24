@@ -35,7 +35,7 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "resources/node/win32-x64": "node/win32-x64"
+      "resources/node/win32-x64/**/*": "node/win32-x64/"
     }
   }
 }
