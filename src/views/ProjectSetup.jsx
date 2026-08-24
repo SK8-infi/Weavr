@@ -4,6 +4,7 @@ import { invoke } from "../lib/tauri";
 
 const PHASE = {
   INSTALLING: "installing",
+  STARTING_PREVIEW: "starting-preview",
   READY: "ready",
   FAILED: "failed",
 };
@@ -13,6 +14,7 @@ export default function ProjectSetup({ project, onBack }) {
   const [phase, setPhase] = useState(PHASE.INSTALLING);
   const [log, setLog] = useState([]);
   const [errorMessage, setErrorMessage] = useState("");
+  const [previewUrl, setPreviewUrl] = useState("");
   const logEndRef = useRef(null);
 
   useEffect(() => {
@@ -28,7 +30,14 @@ export default function ProjectSetup({ project, onBack }) {
 
     invoke("project_install", { projectPath: info.local_path })
       .then(() => {
-        if (!cancelled) setPhase(PHASE.READY);
+        if (cancelled) return;
+        setPhase(PHASE.STARTING_PREVIEW);
+        return invoke("preview_start", { projectPath: info.local_path });
+      })
+      .then((url) => {
+        if (cancelled || !url) return;
+        setPreviewUrl(url);
+        setPhase(PHASE.READY);
       })
       .catch((err) => {
         if (cancelled) return;
@@ -50,7 +59,12 @@ export default function ProjectSetup({ project, onBack }) {
     <div className="rounded-xl border border-canvas-200 bg-white p-6 shadow-panel">
       <button
         type="button"
-        onClick={onBack}
+        onClick={() => {
+          // Tear the dev server (and its preview window) down rather than
+          // leaving a node process running for a project we've left.
+          invoke("preview_stop", { projectPath: info.local_path }).catch(() => {});
+          onBack();
+        }}
         className="mb-4 text-sm text-canvas-800/50 hover:text-canvas-900"
       >
         ← Back to repositories
@@ -63,19 +77,27 @@ export default function ProjectSetup({ project, onBack }) {
           Setting up your website — this only takes a while the first time.
         </p>
       )}
+      {phase === PHASE.STARTING_PREVIEW && (
+        <p className="mb-4 text-sm text-canvas-800/60">Starting the live preview…</p>
+      )}
       {phase === PHASE.READY && (
-        <p className="mb-4 text-sm text-green-700">
-          Setup complete. Live preview is next.
-        </p>
+        <div className="mb-4">
+          <p className="text-sm text-green-700">
+            Your website is running in the preview window.
+          </p>
+          <p className="text-xs text-canvas-800/50">{previewUrl}</p>
+        </div>
       )}
       {phase === PHASE.FAILED && (
         <p className="mb-4 text-sm text-red-600">{errorMessage}</p>
       )}
 
-      <pre className="max-h-64 overflow-y-auto rounded-lg bg-canvas-950 p-4 text-xs leading-relaxed text-canvas-100">
-        {log.length === 0 ? "Starting…" : log.join("\n")}
-        <span ref={logEndRef} />
-      </pre>
+      {phase !== PHASE.READY && (
+        <pre className="max-h-64 overflow-y-auto rounded-lg bg-canvas-950 p-4 text-xs leading-relaxed text-canvas-100">
+          {log.length === 0 ? "Starting…" : log.join("\n")}
+          <span ref={logEndRef} />
+        </pre>
+      )}
     </div>
   );
 }
