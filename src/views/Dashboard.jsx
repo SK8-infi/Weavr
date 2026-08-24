@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "../lib/tauri";
+import ProjectSetup from "./ProjectSetup";
 
 export default function Dashboard({ user, onSignedOut }) {
   const [repos, setRepos] = useState(null);
@@ -51,7 +52,11 @@ export default function Dashboard({ user, onSignedOut }) {
 
       <main className="mx-auto w-full max-w-2xl flex-1 px-6 py-10">
         {project ? (
-          <ProjectStatus project={project} onBack={() => setProject(null)} />
+          project.info.is_valid ? (
+            <ProjectSetup project={project} onBack={() => setProject(null)} />
+          ) : (
+            <InvalidProject project={project} onBack={() => setProject(null)} />
+          )
         ) : (
           <>
             <h1 className="mb-1 text-lg font-semibold text-canvas-900">Your repositories</h1>
@@ -100,7 +105,7 @@ export default function Dashboard({ user, onSignedOut }) {
   );
 }
 
-function ProjectStatus({ project, onBack }) {
+function InvalidProject({ project, onBack }) {
   const { repo, info } = project;
   return (
     <div className="rounded-xl border border-canvas-200 bg-white p-6 shadow-panel">
@@ -114,22 +119,16 @@ function ProjectStatus({ project, onBack }) {
       <h2 className="mb-1 text-lg font-semibold text-canvas-900">{repo.full_name}</h2>
       <p className="mb-4 text-xs text-canvas-800/50">{info.local_path}</p>
 
-      {info.is_valid ? (
-        <p className="text-sm text-green-700">
-          This looks like an IATMSI-style site. Preview coming soon.
+      <div className="text-sm text-amber-700">
+        <p className="mb-2">
+          This repo doesn't match the expected structure yet, so Weavr can't edit it:
         </p>
-      ) : (
-        <div className="text-sm text-amber-700">
-          <p className="mb-2">
-            This repo doesn't match the expected structure yet, so Weavr can't edit it:
-          </p>
-          <ul className="list-inside list-disc">
-            {info.missing.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
-        </div>
-      )}
+        <ul className="list-inside list-disc">
+          {info.missing.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      </div>
     </div>
   );
 }

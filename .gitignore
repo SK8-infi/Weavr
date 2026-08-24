@@ -17,3 +17,8 @@ dist-ssr
 # Tauri
 src-tauri/target
 gen/schemas
+
+# Bundled Node runtime — fetched by `npm run fetch:node`, not committed
+# (100MB+ binary; every dev/build pulls the pinned version fresh)
+src-tauri/resources/node
+.tmp-node-fetch

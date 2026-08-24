@@ -20,3 +20,16 @@ pub fn project_path(app: &AppHandle, full_name: &str) -> AppResult<PathBuf> {
     let safe_name = full_name.replace('/', "__");
     Ok(projects_dir(app)?.join(safe_name))
 }
+
+/// Shared across every cloned project so installing a second/third
+/// conference site doesn't re-download packages the first one already
+/// fetched.
+pub fn npm_cache_dir(app: &AppHandle) -> AppResult<PathBuf> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| AppError::Other(e.to_string()))?
+        .join("npm-cache");
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
