@@ -1,0 +1,223 @@
+// Weavr click-to-edit bridge.
+//
+// Injected by Weavr into the preview webview — the conference site itself
+// contains none of this, so any site following the template contract becomes
+// editable without modification.
+//
+// Weavr pushes the list of editable strings (value -> field id) once per load.
+// We match rendered text nodes against it, make the matches editable in place,
+// and emit an event back to Rust when one changes. Text that doesn't resolve
+// to exactly one data field is left alone rather than guessed at.
+
+(function () {
+  if (window.__weavrEditBridge) return;
+
+  const STYLE_ID = "weavr-edit-styles";
+  const EDITABLE_ATTR = "data-weavr-field";
+
+  /** @type {Map<string, string>} normalized text -> field id */
+  let valueIndex = new Map();
+  let enabled = false;
+
+  const normalize = (text) => text.replace(/\s+/g, " ").trim();
+
+  function installStyles() {
+    if (document.getElementById(STYLE_ID)) return;
+    const style = document.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = `
+      [${EDITABLE_ATTR}] {
+        outline: 1px dashed rgba(79, 70, 229, 0.45);
+        outline-offset: 2px;
+        cursor: text;
+        transition: outline-color 0.12s ease, background-color 0.12s ease;
+      }
+      [${EDITABLE_ATTR}]:hover {
+        outline: 2px solid rgb(79, 70, 229);
+        background-color: rgba(79, 70, 229, 0.06);
+      }
+      [${EDITABLE_ATTR}][contenteditable="true"]:focus {
+        outline: 2px solid rgb(79, 70, 229);
+        background-color: rgba(79, 70, 229, 0.1);
+      }
+      [${EDITABLE_ATTR}][data-weavr-saving="1"] {
+        outline-color: rgb(202, 138, 4);
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  /**
+   * An element is editable only if its entire visible text is one data value.
+   * Elements containing several children are containers — editing one would
+   * mean writing markup back into a data file.
+   */
+  function elementsToMark() {
+    const matches = [];
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+
+    while (walker.nextNode()) {
+      const textNode = walker.currentNode;
+      const parent = textNode.parentElement;
+      if (!parent) continue;
+      if (parent.closest("script, style, svg, [data-weavr-ignore]")) continue;
+      if (parent.hasAttribute(EDITABLE_ATTR)) continue;
+
+      const key = normalize(textNode.textContent || "");
+      if (!key) continue;
+
+      // Only treat this as the element's own text if it has no element
+      // children — otherwise we'd overwrite nested markup on save.
+      if (parent.children.length > 0) continue;
+      if (normalize(parent.textContent || "") !== key) continue;
+
+      // Weavr only sends text that maps to exactly one data field; anything
+      // ambiguous is absent here by design and stays non-editable in place.
+      const fieldId = valueIndex.get(key);
+      if (!fieldId) continue;
+
+      matches.push([parent, fieldId]);
+    }
+
+    return matches;
+  }
+
+  function markEditable() {
+    if (!enabled) return;
+    for (const [element, fieldId] of elementsToMark()) {
+      element.setAttribute(EDITABLE_ATTR, fieldId);
+      element.setAttribute("contenteditable", "true");
+      element.setAttribute("spellcheck", "false");
+      // Record the last-saved text once, when the element is first adopted.
+      // It must NOT be refreshed as the user types, or a rejected save would
+      // "roll back" to the unsaved text and the preview would show content
+      // that was never written to disk.
+      if (element.dataset.weavrOriginal === undefined) {
+        element.dataset.weavrOriginal = normalize(element.textContent || "");
+      }
+      element.addEventListener("keydown", onKeyDown);
+      element.addEventListener("blur", onBlur);
+    }
+  }
+
+  function onKeyDown(event) {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      event.currentTarget.blur();
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      const element = event.currentTarget;
+      element.textContent = element.dataset.weavrOriginal ?? element.textContent;
+      element.blur();
+    }
+  }
+
+  function onBlur(event) {
+    const element = event.currentTarget;
+    const fieldId = element.getAttribute(EDITABLE_ATTR);
+    const newValue = normalize(element.textContent || "");
+    const original = element.dataset.weavrOriginal;
+
+    if (original === undefined || newValue === original) return;
+    if (!newValue) {
+      // Refuse to blank a field by accident; restore and let the user use the
+      // side panel if they really mean to clear it.
+      element.textContent = original;
+      return;
+    }
+
+    element.setAttribute("data-weavr-saving", "1");
+    emit("weavr://text-edited", { fieldId, newValue });
+  }
+
+  function emit(name, payload) {
+    const api = window.__TAURI__;
+    if (api?.event?.emit) {
+      api.event.emit(name, payload);
+    }
+  }
+
+  // Links would navigate away mid-edit, so suppress that while editing is on.
+  function suppressNavigation(event) {
+    if (!enabled) return;
+    const anchor = event.target.closest?.("a");
+    if (anchor && anchor.hasAttribute(EDITABLE_ATTR)) {
+      event.preventDefault();
+    }
+  }
+
+  let refreshQueued = false;
+  function queueRefresh() {
+    if (refreshQueued) return;
+    // Typing mutates the DOM on every keystroke; rescanning the page mid-edit
+    // is wasted work, and the element being edited is already adopted.
+    if (document.activeElement?.hasAttribute?.(EDITABLE_ATTR)) return;
+    refreshQueued = true;
+    // setTimeout rather than requestAnimationFrame: the preview window is
+    // frequently occluded by the Weavr dashboard, and rAF does not fire in a
+    // hidden page — the site would silently never become editable. This is
+    // DOM bookkeeping, not animation, so it should not be tied to painting.
+    setTimeout(() => {
+      refreshQueued = false;
+      markEditable();
+    }, 0);
+  }
+
+  const observer = new MutationObserver(queueRefresh);
+
+  window.__weavrEditBridge = {
+    /**
+     * Called by Weavr with this project's resolvable values —
+     * [{ value, field_id }] — each already known to map to one field.
+     */
+    setValues(entries) {
+      valueIndex = new Map();
+      for (const entry of entries) {
+        const key = normalize(entry.value);
+        if (key) valueIndex.set(key, entry.field_id);
+      }
+      queueRefresh();
+    },
+
+    setEnabled(next) {
+      enabled = next;
+      if (enabled) {
+        installStyles();
+        document.addEventListener("click", suppressNavigation, true);
+        observer.observe(document.body, { childList: true, subtree: true });
+        queueRefresh();
+      } else {
+        document.removeEventListener("click", suppressNavigation, true);
+        observer.disconnect();
+        document.querySelectorAll(`[${EDITABLE_ATTR}]`).forEach((element) => {
+          element.removeAttribute(EDITABLE_ATTR);
+          element.removeAttribute("contenteditable");
+          // Drop the saved-value baseline too, so re-enabling re-reads it
+          // from whatever the site renders at that point.
+          delete element.dataset.weavrOriginal;
+          element.removeEventListener("keydown", onKeyDown);
+          element.removeEventListener("blur", onBlur);
+        });
+      }
+    },
+
+    /** Confirms a save landed, so the element stops showing as in-flight. */
+    confirmSaved(fieldId, savedValue) {
+      const element = document.querySelector(`[${EDITABLE_ATTR}="${CSS.escape(fieldId)}"]`);
+      if (!element) return;
+      element.removeAttribute("data-weavr-saving");
+      element.dataset.weavrOriginal = normalize(savedValue);
+    },
+
+    /** Rolls the element back if Rust rejected the write. */
+    rejectSave(fieldId) {
+      const element = document.querySelector(`[${EDITABLE_ATTR}="${CSS.escape(fieldId)}"]`);
+      if (!element) return;
+      element.removeAttribute("data-weavr-saving");
+      if (element.dataset.weavrOriginal !== undefined) {
+        element.textContent = element.dataset.weavrOriginal;
+      }
+    },
+  };
+})();

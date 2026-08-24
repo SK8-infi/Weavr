@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { invoke } from "../lib/tauri";
 import ProjectSetup from "./ProjectSetup";
+import EditorView from "./EditorView";
 
 export default function Dashboard({ user, onSignedOut }) {
   const [repos, setRepos] = useState(null);
   const [loadError, setLoadError] = useState("");
   const [cloningId, setCloningId] = useState(null);
   const [project, setProject] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState("");
 
   useEffect(() => {
     invoke("repo_list")
@@ -19,9 +21,15 @@ export default function Dashboard({ user, onSignedOut }) {
     onSignedOut();
   }
 
+  function closeProject() {
+    setProject(null);
+    setPreviewUrl("");
+  }
+
   async function selectRepo(repo) {
     setCloningId(repo.id);
     setProject(null);
+    setPreviewUrl("");
     setLoadError("");
     try {
       const info = await invoke("repo_clone", { repo });
@@ -31,6 +39,13 @@ export default function Dashboard({ user, onSignedOut }) {
     } finally {
       setCloningId(null);
     }
+  }
+
+  // Once the preview is up, the editor takes over the whole window.
+  if (project?.info.is_valid && previewUrl) {
+    return (
+      <EditorView project={project} previewUrl={previewUrl} onBack={closeProject} />
+    );
   }
 
   return (
@@ -53,9 +68,13 @@ export default function Dashboard({ user, onSignedOut }) {
       <main className="mx-auto w-full max-w-2xl flex-1 px-6 py-10">
         {project ? (
           project.info.is_valid ? (
-            <ProjectSetup project={project} onBack={() => setProject(null)} />
+            <ProjectSetup
+              project={project}
+              onBack={closeProject}
+              onReady={setPreviewUrl}
+            />
           ) : (
-            <InvalidProject project={project} onBack={() => setProject(null)} />
+            <InvalidProject project={project} onBack={closeProject} />
           )
         ) : (
           <>

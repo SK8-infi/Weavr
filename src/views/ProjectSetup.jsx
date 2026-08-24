@@ -9,7 +9,7 @@ const PHASE = {
   FAILED: "failed",
 };
 
-export default function ProjectSetup({ project, onBack }) {
+export default function ProjectSetup({ project, onBack, onReady }) {
   const { repo, info } = project;
   const [phase, setPhase] = useState(PHASE.INSTALLING);
   const [log, setLog] = useState([]);
@@ -38,6 +38,7 @@ export default function ProjectSetup({ project, onBack }) {
         if (cancelled || !url) return;
         setPreviewUrl(url);
         setPhase(PHASE.READY);
+        onReady(url);
       })
       .catch((err) => {
         if (cancelled) return;

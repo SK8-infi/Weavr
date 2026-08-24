@@ -10,6 +10,8 @@ pub enum AppError {
     Keychain(#[from] keyring::Error),
     #[error("not signed in")]
     NotAuthenticated,
+    #[error("no project is open")]
+    NoProjectOpen,
     #[error("git error: {0}")]
     Git(#[from] git2::Error),
     #[error("filesystem error: {0}")]

@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "preview",
+  "description": "Minimal surface for the previewed site's click-to-edit bridge. The preview window renders the user's own site from a localhost dev server, so it gets events only — no filesystem, shell, git, or GitHub access.",
+  "windows": ["preview"],
+  "remote": {
+    "urls": ["http://127.0.0.1:*"]
+  },
+  "permissions": ["core:event:default"]
+}

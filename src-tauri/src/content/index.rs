@@ -20,14 +20,11 @@ pub struct ContentIndex {
     by_value: HashMap<String, Vec<usize>>,
 }
 
-/// What a lookup produced. Ambiguity is reported rather than guessed at —
-/// writing to the wrong field would silently corrupt unrelated content.
+/// A rendered string and the single data field it came from.
 #[derive(Debug, Clone, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum LookupResult {
-    Unique { leaf: LeafRecord },
-    Ambiguous { candidates: Vec<LeafRecord> },
-    NotFound,
+pub struct ResolvedValue {
+    pub value: String,
+    pub field_id: String,
 }
 
 impl ContentIndex {
@@ -60,41 +57,33 @@ impl ContentIndex {
         self.leaves.iter().find(|leaf| leaf.id() == id)
     }
 
-    /// Looks up rendered text. `preferred_files` narrows candidates to the data
-    /// files the currently-rendered page is known to read from, which is how
-    /// most duplicate strings get resolved.
-    pub fn lookup(&self, rendered_text: &str, preferred_files: &[String]) -> LookupResult {
-        let key = normalize(rendered_text);
-        let Some(positions) = self.by_value.get(&key) else {
-            return LookupResult::NotFound;
-        };
+    /// Values that identify exactly one field, ready to hand to the preview's
+    /// click-to-edit bridge.
+    ///
+    /// Ambiguous text is deliberately withheld: the same string can appear in
+    /// several data fields (a committee affiliation repeated across members),
+    /// and there is no way to tell from the text alone which one a given
+    /// element came from. Those stay editable through the content forms, where
+    /// the user picks the field explicitly, rather than risking a write to the
+    /// wrong one.
+    pub fn unambiguous_values(&self) -> Vec<ResolvedValue> {
+        self.by_value
+            .iter()
+            .filter(|(_, positions)| positions.len() == 1)
+            .map(|(value, positions)| ResolvedValue {
+                value: value.clone(),
+                field_id: self.leaves[positions[0]].id(),
+            })
+            .collect()
+    }
 
-        let candidates: Vec<LeafRecord> =
-            positions.iter().map(|i| self.leaves[i.clone()].clone()).collect();
-
-        if candidates.len() == 1 {
-            return LookupResult::Unique {
-                leaf: candidates.into_iter().next().expect("length checked"),
-            };
-        }
-
-        if !preferred_files.is_empty() {
-            let narrowed: Vec<LeafRecord> = candidates
-                .iter()
-                .filter(|leaf| preferred_files.contains(&leaf.file))
-                .cloned()
-                .collect();
-            if narrowed.len() == 1 {
-                return LookupResult::Unique {
-                    leaf: narrowed.into_iter().next().expect("length checked"),
-                };
-            }
-            if !narrowed.is_empty() {
-                return LookupResult::Ambiguous { candidates: narrowed };
-            }
-        }
-
-        LookupResult::Ambiguous { candidates }
+    /// How many indexed values are too duplicated to resolve from text alone.
+    pub fn ambiguous_count(&self) -> usize {
+        self.by_value
+            .values()
+            .filter(|positions| positions.len() > 1)
+            .map(|positions| positions.len())
+            .sum()
     }
 }
 
@@ -112,31 +101,45 @@ mod tests {
         ContentIndex::from_leaves(parser::parse_source("src/data/a.js", source).unwrap())
     }
 
+    fn resolved(index: &ContentIndex, text: &str) -> Option<ResolvedValue> {
+        index
+            .unambiguous_values()
+            .into_iter()
+            .find(|r| r.value == normalize(text))
+    }
+
     #[test]
-    fn finds_a_unique_string() {
+    fn resolves_a_unique_string_to_its_field() {
         let index = index_from(r#"export const d = { title: "Contact Us" };"#);
-        match index.lookup("Contact Us", &[]) {
-            LookupResult::Unique { leaf } => assert_eq!(leaf.json_path, "title"),
-            other => panic!("expected unique, got {other:?}"),
-        }
+        let hit = resolved(&index, "Contact Us").expect("should resolve");
+        assert!(hit.field_id.ends_with("::title"));
     }
 
     #[test]
     fn matches_across_collapsed_whitespace() {
+        // Data files wrap long copy across lines; HTML collapses that
+        // whitespace, so the two must still compare equal.
         let index = index_from("export const d = { intro: \"one  two\\nthree\" };");
-        assert!(matches!(
-            index.lookup("one two three", &[]),
-            LookupResult::Unique { .. }
-        ));
+        assert!(resolved(&index, "one two three").is_some());
     }
 
     #[test]
-    fn reports_duplicates_instead_of_guessing() {
+    fn withholds_duplicated_text_instead_of_guessing() {
         let index = index_from(r#"export const d = { a: "Submit", b: "Submit" };"#);
-        match index.lookup("Submit", &[]) {
-            LookupResult::Ambiguous { candidates } => assert_eq!(candidates.len(), 2),
-            other => panic!("expected ambiguous, got {other:?}"),
-        }
+        assert!(
+            resolved(&index, "Submit").is_none(),
+            "duplicated text must not be offered for click-to-edit"
+        );
+        assert_eq!(index.ambiguous_count(), 2);
+    }
+
+    #[test]
+    fn excludes_structural_values_from_matching() {
+        // "hero" here is a section id, not copy — clicking a heading that
+        // happens to read "hero" must never resolve to it.
+        let index = index_from(r#"export const p = [{ sectionId: "hero", title: "hero" }];"#);
+        let hit = resolved(&index, "hero").expect("the title should still resolve");
+        assert!(hit.field_id.ends_with("title"), "got {}", hit.field_id);
     }
 
     #[test]
@@ -152,10 +155,7 @@ mod tests {
     #[test]
     fn missing_text_is_not_found() {
         let index = index_from(r#"export const d = { title: "Contact Us" };"#);
-        assert!(matches!(
-            index.lookup("Nothing here", &[]),
-            LookupResult::NotFound
-        ));
+        assert!(resolved(&index, "Nothing here").is_none());
     }
 
     /// Run against a real conference site to see what the index actually looks
@@ -169,48 +169,19 @@ mod tests {
         };
 
         let index = ContentIndex::build(Path::new(&root)).expect("project should parse");
-        let total: usize = index.by_value.values().map(|p| p.len()).sum();
-        assert!(total > 0, "expected to extract some editable strings");
-        println!(
-            "leaves parsed: {} (structural/empty excluded from matching: {})",
-            index.leaves().len(),
-            index.leaves().len() - total
-        );
+        let clickable = index.unambiguous_values().len();
+        let ambiguous = index.ambiguous_count();
+        assert!(clickable > 0, "expected some click-to-editable strings");
 
-        let duplicated: usize = index
-            .by_value
-            .values()
-            .filter(|positions| positions.len() > 1)
-            .map(|positions| positions.len())
-            .sum();
-
-        let mut files: Vec<_> = index
+        let files = index
             .leaves()
             .iter()
             .map(|l| l.file.clone())
-            .collect::<std::collections::BTreeSet<_>>()
-            .into_iter()
-            .collect();
-        files.sort();
+            .collect::<std::collections::BTreeSet<_>>();
 
-        println!("editable strings: {total}");
-        println!("across data files: {}", files.len());
-        println!(
-            "needing disambiguation: {duplicated} ({:.1}%)",
-            (duplicated as f64 / total as f64) * 100.0
-        );
-
-        let mut worst: Vec<_> = index
-            .by_value
-            .iter()
-            .filter(|(_, positions)| positions.len() > 1)
-            .map(|(value, positions)| (positions.len(), value.clone()))
-            .collect();
-        worst.sort_by(|a, b| b.0.cmp(&a.0));
-        println!("\nmost-duplicated values:");
-        for (count, value) in worst.iter().take(15) {
-            let preview: String = value.chars().take(60).collect();
-            println!("  {count:>4}x  {preview:?}");
-        }
+        println!("leaves parsed:        {}", index.leaves().len());
+        println!("data files:           {}", files.len());
+        println!("click-to-editable:    {clickable}");
+        println!("forms-only (ambiguous): {ambiguous}");
     }
 }
