@@ -28,6 +28,10 @@ pub struct ResolvedValue {
 }
 
 /// One candidate field for a rendered string.
+///
+/// Candidates for a value are kept in the order they appear in the data files,
+/// which is the order components render them in — that's what lets the preview
+/// pair the nth occurrence on screen with the nth field.
 #[derive(Debug, Clone, Serialize)]
 pub struct Candidate {
     pub field_id: String,
@@ -265,7 +269,9 @@ mod tests {
         // Optionally dump the real value list so the click-to-edit bridge can
         // be exercised against actual project data instead of synthetic input.
         if let Ok(out) = std::env::var("WEAVR_DUMP_VALUES") {
-            let json = serde_json::to_string(&index.unambiguous_values()).unwrap();
+            // Dump exactly what the preview is sent, so the bridge can be
+            // audited against real data rather than a synthetic subset.
+            let json = serde_json::to_string(&index.all_values()).unwrap();
             std::fs::write(&out, json).unwrap();
             println!("wrote value dump to {out}");
         }

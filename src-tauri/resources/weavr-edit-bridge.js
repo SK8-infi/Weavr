@@ -84,19 +84,44 @@
    * doesn't, the text stays non-editable in place: overwriting the wrong field
    * would silently change a different part of the site.
    */
-  function resolveField(element, entries) {
-    if (!entries || entries.length === 0) return null;
-    if (entries.length === 1) return entries[0].field_id;
-
+  /** Candidates left after honouring the section's declared data source. */
+  function narrowBySource(element, entries) {
     const declaring = element.closest("[data-weavr-source]");
-    if (!declaring) return null;
+    if (!declaring) return entries;
 
     const sources = (declaring.getAttribute("data-weavr-source") || "")
       .split(/\s+/)
       .filter(Boolean);
     const narrowed = entries.filter((e) => sources.includes(e.source));
 
-    return narrowed.length === 1 ? narrowed[0].field_id : null;
+    return narrowed.length > 0 ? narrowed : entries;
+  }
+
+  /**
+   * Picks which field a rendered string belongs to.
+   *
+   * `occurrences` maps each matched string to every element showing it, in
+   * document order. When a string is repeated — a role like "Chair" held by
+   * several people, a shared affiliation — the nth on screen is the nth in the
+   * data, because components render lists in order.
+   *
+   * That pairing is only trusted when the counts agree exactly. If the page is
+   * showing a filtered subset, the positions no longer line up, and guessing
+   * would write to the wrong person's entry; the text stays non-editable in
+   * place and can still be changed from the side panel.
+   */
+  function resolveField(element, entries, occurrences) {
+    if (!entries || entries.length === 0) return null;
+    if (entries.length === 1) return entries[0].field_id;
+
+    const pool = narrowBySource(element, entries);
+    if (pool.length === 1) return pool[0].field_id;
+
+    const shown = occurrences?.get(normalize(element.textContent || ""));
+    if (!shown || shown.length !== pool.length) return null;
+
+    const position = shown.indexOf(element);
+    return position === -1 ? null : pool[position].field_id;
   }
 
   /** Leaf-ish elements worth testing for a literal + field combination. */
@@ -115,7 +140,7 @@
    * — if the value appears twice, or several fields could fit, there's no way
    * to know which part of the string the user means to change.
    */
-  function matchComposed(element) {
+  function matchComposed(element, occurrences) {
     const text = normalize(element.textContent || "");
     let found = null;
 
@@ -126,8 +151,11 @@
       if (at === -1) continue;
       if (text.indexOf(value, at + 1) !== -1) continue;
 
-      const fieldId = resolveField(element, entries);
-      if (!fieldId) continue;
+      // A value embedded in a longer string can't be paired by position, so
+      // only accept it when the source narrows it to exactly one field.
+      const pool = narrowBySource(element, entries);
+      if (pool.length !== 1) continue;
+      const fieldId = pool[0].field_id;
       if (found) return null;
 
       found = {
@@ -143,6 +171,14 @@
   function elementsToMark() {
     const candidates = new Map();
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+
+    // First pass: find every element whose whole text is a known value, in
+    // document order. Resolution waits until all of them are known, because
+    // deciding which field a repeated string belongs to depends on how many
+    // times the page shows it.
+    const hits = [];
+    const occurrences = new Map();
+    const seen = new Set();
 
     while (walker.nextNode()) {
       const textNode = walker.currentNode;
@@ -160,11 +196,20 @@
         const key = normalize(element.textContent || "");
         if (!key || key.length > maxValueLength) break;
 
-        const fieldId = resolveField(element, valueIndex.get(key));
-        if (fieldId) candidates.set(element, { fieldId, prefix: "", suffix: "" });
+        if (valueIndex.has(key) && !seen.has(element)) {
+          seen.add(element);
+          hits.push([element, key]);
+          if (!occurrences.has(key)) occurrences.set(key, []);
+          occurrences.get(key).push(element);
+        }
 
         element = element.parentElement;
       }
+    }
+
+    for (const [element, key] of hits) {
+      const fieldId = resolveField(element, valueIndex.get(key), occurrences);
+      if (fieldId) candidates.set(element, { fieldId, prefix: "", suffix: "" });
     }
 
     // Text a component builds from a literal plus a field ("Track 5: " + title,
@@ -173,7 +218,7 @@
     // the string.
     for (const element of composedElements()) {
       if (candidates.has(element)) continue;
-      const composed = matchComposed(element);
+      const composed = matchComposed(element, occurrences);
       if (composed) candidates.set(element, composed);
     }
 

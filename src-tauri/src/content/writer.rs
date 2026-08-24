@@ -38,17 +38,31 @@ pub fn write_string_field(
             ))
         })?;
 
-    // The page renders emphasis markers away, so an edit arrives as plain
-    // text. Put the markers back around any phrase that was emphasised before
-    // and still survives, or saving would quietly strip the bolding.
-    let new_value = reapply_emphasis(&leaf.value, new_value);
+    // A numeric literal has no quotes to write inside, so the replacement has
+    // to still parse as a number — otherwise the splice would turn `number: 3`
+    // into `number: three` and break the module for the whole site.
+    let (new_value, escaped) = if leaf.is_number {
+        let trimmed = new_value.trim();
+        if trimmed.parse::<f64>().is_err() {
+            return Err(AppError::Other(format!(
+                "{} expects a number, but got \"{new_value}\"",
+                friendly_field(json_path)
+            )));
+        }
+        (trimmed.to_string(), trimmed.to_string())
+    } else {
+        // The page renders emphasis markers away, so an edit arrives as plain
+        // text. Put the markers back around any phrase that was emphasised
+        // before and still survives, or saving would quietly strip the bolding.
+        let value = reapply_emphasis(&leaf.value, new_value);
+        // The delimiter sits immediately before the content span; escaping has
+        // to match it (a backtick-delimited string needs `${` neutralised, a
+        // quoted one does not).
+        let delimiter = source[..leaf.start_byte].chars().next_back().unwrap_or('"');
+        let escaped = escape_for_js_string(&value, delimiter);
+        (value, escaped)
+    };
     let new_value = new_value.as_str();
-
-    // The delimiter sits immediately before the content span; escaping has to
-    // match it (a backtick-delimited string needs `${` neutralised, a quoted
-    // one does not).
-    let delimiter = source[..leaf.start_byte].chars().next_back().unwrap_or('"');
-    let escaped = escape_for_js_string(new_value, delimiter);
 
     let mut updated = String::with_capacity(source.len() + escaped.len());
     updated.push_str(&source[..leaf.start_byte]);
@@ -73,6 +87,18 @@ pub fn write_string_field(
         .map_err(|e| AppError::Other(format!("could not write {relative_file}: {e}")))?;
 
     Ok(())
+}
+
+/// "documents[0].title" -> "Documents 1 title", for error messages a
+/// non-technical user can act on.
+fn friendly_field(json_path: &str) -> String {
+    let spaced = json_path.replace('.', " ").replace(['[', ']'], " ");
+    let cleaned = spaced.split_whitespace().collect::<Vec<_>>().join(" ");
+    if cleaned.is_empty() {
+        "This field".to_string()
+    } else {
+        cleaned
+    }
 }
 
 /// Collects the phrases wrapped in `**...**` in a stored value.

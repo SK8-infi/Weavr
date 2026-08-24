@@ -34,6 +34,10 @@ pub struct LeafRecord {
     /// click-to-edit matching and hidden from the content forms: they're
     /// wiring, and changing one breaks the site rather than reworking copy.
     pub is_structural: bool,
+    /// A numeric literal. Written back without quotes so it stays a number,
+    /// and only ever replaced with something that still parses as one.
+    #[serde(default)]
+    pub is_number: bool,
 }
 
 /// Field names whose values are identifiers/wiring rather than visible copy.
@@ -171,6 +175,27 @@ fn collect_leaves(
                     start_byte: start,
                     end_byte: end,
                     is_structural,
+                    is_number: false,
+                });
+            }
+        }
+        // Numbers render as text too — a track's `number`, a statistic, a
+        // count. Without these, visible figures on the page trace to no field
+        // and can't be edited. The span is the literal itself (no quotes to
+        // sit inside), and writing back keeps it unquoted so it stays a number.
+        "number" => {
+            let value = node_text(node, source).to_string();
+            if !value.is_empty() {
+                let is_structural = is_structural_path(&path);
+                out.push(LeafRecord {
+                    file: file.to_string(),
+                    export_name: export_name.to_string(),
+                    json_path: path,
+                    value,
+                    start_byte: node.start_byte(),
+                    end_byte: node.end_byte(),
+                    is_structural,
+                    is_number: true,
                 });
             }
         }
