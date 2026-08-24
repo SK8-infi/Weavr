@@ -29,6 +29,9 @@ export default function EditorView({ project, onBack }) {
 
       <p className="border-b border-canvas-200 bg-brand-50 px-4 py-2 text-xs text-canvas-800/70">
         Click any text in the preview to edit it, or use the list below.
+        <br />
+        Hold <kbd className="rounded border border-canvas-200 bg-white px-1">Ctrl</kbd> and click
+        to use the site normally — follow a link or open a menu.
       </p>
 
       <div className="min-h-0 flex-1">

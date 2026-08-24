@@ -45,6 +45,13 @@
       [${EDITABLE_ATTR}][data-weavr-saving="1"] {
         outline-color: rgb(202, 138, 4);
       }
+      /* Holding Ctrl/Cmd switches to using the site rather than editing it. */
+      body.weavr-bypass [${EDITABLE_ATTR}] {
+        cursor: pointer;
+        outline-style: solid;
+        outline-color: rgba(22, 163, 74, 0.6);
+        background-color: rgba(22, 163, 74, 0.06);
+      }
     `;
     document.head.appendChild(style);
   }
@@ -260,11 +267,65 @@
     }
   }
 
-  // Links would navigate away mid-edit, so suppress that while editing is on.
-  function suppressNavigation(event) {
+  const isBypass = (event) => event.ctrlKey || event.metaKey;
+  let replayingClick = false;
+
+  // Reflect the modifier in a body class so the outlines can show that a click
+  // will use the site rather than edit it.
+  function trackBypassKey(event) {
     if (!enabled) return;
+    document.body.classList.toggle("weavr-bypass", isBypass(event));
+  }
+  const clearBypassKey = () => document.body.classList.remove("weavr-bypass");
+
+  /**
+   * Ctrl/Cmd-click means "use the site normally" — follow the link, open the
+   * dropdown — so the user can reach the page they want to edit. A plain click
+   * edits, which is the common case.
+   *
+   * The contenteditable attribute has to come off before the browser handles
+   * the press, or it swallows the click into a caret placement instead.
+   */
+  function onMouseDownCapture(event) {
+    if (!enabled || !isBypass(event)) return;
+    const editable = event.target.closest?.(`[${EDITABLE_ATTR}]`);
+    if (!editable) return;
+
+    editable.removeAttribute("contenteditable");
+    // Restore once the click has been dispatched.
+    setTimeout(() => {
+      if (editable.hasAttribute(EDITABLE_ATTR)) {
+        editable.setAttribute("contenteditable", "true");
+      }
+    }, 0);
+  }
+
+  function onClickCapture(event) {
+    if (!enabled) return;
+    // Our own replayed click — let it reach the site's handlers.
+    if (replayingClick) return;
     const anchor = event.target.closest?.("a");
-    if (anchor && anchor.hasAttribute(EDITABLE_ATTR)) {
+
+    if (isBypass(event)) {
+      // Buttons run their own handler untouched. Links need the modifier
+      // stripped: a router treats Ctrl-click as "open a new tab" and steps
+      // aside, and a new tab has nowhere to go inside the preview. Replaying
+      // it as a plain click keeps navigation client-side, so the page doesn't
+      // reload and the edit bridge stays live.
+      if (anchor) {
+        event.preventDefault();
+        event.stopPropagation();
+        replayingClick = true;
+        anchor.dispatchEvent(
+          new MouseEvent("click", { bubbles: true, cancelable: true, view: window }),
+        );
+        replayingClick = false;
+      }
+      return;
+    }
+
+    // Plain click on an editable link: stay put so the edit isn't lost.
+    if (anchor && anchor.closest(`[${EDITABLE_ATTR}]`)) {
       event.preventDefault();
     }
   }
@@ -309,11 +370,20 @@
       enabled = next;
       if (enabled) {
         installStyles();
-        document.addEventListener("click", suppressNavigation, true);
+        document.addEventListener("mousedown", onMouseDownCapture, true);
+        document.addEventListener("click", onClickCapture, true);
+        document.addEventListener("keydown", trackBypassKey, true);
+        document.addEventListener("keyup", trackBypassKey, true);
+        window.addEventListener("blur", clearBypassKey);
         observer.observe(document.body, { childList: true, subtree: true });
         queueRefresh();
       } else {
-        document.removeEventListener("click", suppressNavigation, true);
+        document.removeEventListener("mousedown", onMouseDownCapture, true);
+        document.removeEventListener("click", onClickCapture, true);
+        document.removeEventListener("keydown", trackBypassKey, true);
+        document.removeEventListener("keyup", trackBypassKey, true);
+        window.removeEventListener("blur", clearBypassKey);
+        clearBypassKey();
         observer.disconnect();
         document.querySelectorAll(`[${EDITABLE_ATTR}]`).forEach((element) => {
           element.removeAttribute(EDITABLE_ATTR);
