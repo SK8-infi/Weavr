@@ -98,7 +98,18 @@ pub fn show_preview(app: &AppHandle, url: &str, init_script: &str) -> AppResult<
     )
     // Runs on every document in this webview, so the bridge survives
     // navigation between pages of the site.
-    .initialization_script(init_script);
+    .initialization_script(init_script)
+    // Push the value list from Rust after every page load rather than relying
+    // only on the page announcing itself. Without this, the first page works
+    // (preview_start pushes explicitly) but anything navigated to afterwards
+    // silently comes up uneditable if the announcement doesn't get through.
+    .on_page_load(|webview, payload| {
+        if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
+            let _ = crate::commands::preview_commands::push_editable_values(
+                webview.app_handle(),
+            );
+        }
+    });
 
     window
         .add_child(

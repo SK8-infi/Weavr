@@ -45,6 +45,11 @@
       [${EDITABLE_ATTR}][data-weavr-saving="1"] {
         outline-color: rgb(202, 138, 4);
       }
+      /* An edit that could not be saved, restored to its stored value. */
+      [${EDITABLE_ATTR}][data-weavr-error="1"] {
+        outline: 2px solid rgb(220, 38, 38);
+        background-color: rgba(220, 38, 38, 0.08);
+      }
       /* Holding Ctrl/Cmd switches to using the site rather than editing it. */
       body.weavr-bypass [${EDITABLE_ATTR}] {
         cursor: pointer;
@@ -212,6 +217,10 @@
   }
 
   function onKeyDown(event) {
+    // Typing again clears a previous failure so the warning reflects this
+    // attempt, not an old one.
+    event.currentTarget.removeAttribute("data-weavr-error");
+
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       event.currentTarget.blur();
@@ -257,13 +266,29 @@
     }
 
     element.setAttribute("data-weavr-saving", "1");
-    emit("weavr://text-edited", { fieldId, newValue: fieldValue });
+    if (!emit("weavr://text-edited", { fieldId, newValue: fieldValue })) {
+      // Never leave an unsaved change looking saved.
+      element.removeAttribute("data-weavr-saving");
+      element.setAttribute("data-weavr-error", "1");
+      element.textContent = original;
+      console.error("[weavr] edit not saved: the editor bridge is unavailable");
+    }
   }
 
+  /**
+   * Returns whether the message actually reached Weavr. Callers must check:
+   * if the bridge to Rust is missing, an edit looks applied on screen but is
+   * never written, and the user loses it on the next reload without warning.
+   */
   function emit(name, payload) {
     const api = window.__TAURI__;
-    if (api?.event?.emit) {
+    if (!api?.event?.emit) return false;
+    try {
       api.event.emit(name, payload);
+      return true;
+    } catch (err) {
+      console.error("[weavr] could not reach the editor:", err);
+      return false;
     }
   }
 
