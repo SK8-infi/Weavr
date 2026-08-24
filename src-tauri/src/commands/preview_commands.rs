@@ -63,7 +63,7 @@ pub fn push_editable_values(app: &AppHandle) -> AppResult<()> {
         return Ok(());
     };
 
-    let payload = serde_json::to_string(&session.index.unambiguous_values())
+    let payload = serde_json::to_string(&session.index.all_values())
         .map_err(|e| AppError::Other(format!("could not serialize editable values: {e}")))?;
 
     // The page may still be loading when this runs, so the bridge polls for

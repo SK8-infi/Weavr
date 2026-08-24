@@ -27,6 +27,22 @@ pub struct ResolvedValue {
     pub field_id: String,
 }
 
+/// One candidate field for a rendered string.
+#[derive(Debug, Clone, Serialize)]
+pub struct Candidate {
+    pub field_id: String,
+    /// Data file stem ("conferenceData"), matched against a section's
+    /// declared `data-weavr-source` to break ties.
+    pub source: String,
+}
+
+/// A rendered string together with every field it could have come from.
+#[derive(Debug, Clone, Serialize)]
+pub struct ValueCandidates {
+    pub value: String,
+    pub fields: Vec<Candidate>,
+}
+
 impl ContentIndex {
     pub fn build(project_root: &Path) -> AppResult<Self> {
         Ok(Self::from_leaves(parser::parse_project(project_root)?))
@@ -77,6 +93,30 @@ impl ContentIndex {
             .collect()
     }
 
+    /// Every indexed value with all of its candidate fields.
+    ///
+    /// Duplicated text is included here rather than withheld: the preview can
+    /// often still resolve it, because a section declares which data file it
+    /// renders from, which narrows the candidates to one.
+    pub fn all_values(&self) -> Vec<ValueCandidates> {
+        self.by_value
+            .iter()
+            .map(|(value, positions)| ValueCandidates {
+                value: value.clone(),
+                fields: positions
+                    .iter()
+                    .map(|p| {
+                        let leaf = &self.leaves[*p];
+                        Candidate {
+                            field_id: leaf.id(),
+                            source: source_of(&leaf.file),
+                        }
+                    })
+                    .collect(),
+            })
+            .collect()
+    }
+
     /// How many indexed values are too duplicated to resolve from text alone.
     pub fn ambiguous_count(&self) -> usize {
         self.by_value
@@ -85,6 +125,15 @@ impl ContentIndex {
             .map(|positions| positions.len())
             .sum()
     }
+}
+
+/// "src/data/conferenceData.js" -> "conferenceData"
+fn source_of(file: &str) -> String {
+    file.rsplit('/')
+        .next()
+        .unwrap_or(file)
+        .trim_end_matches(".js")
+        .to_string()
 }
 
 /// Rendered HTML collapses whitespace, so compare on collapsed whitespace or
@@ -183,5 +232,18 @@ mod tests {
         println!("data files:           {}", files.len());
         println!("click-to-editable:    {clickable}");
         println!("forms-only (ambiguous): {ambiguous}");
+
+        // Optionally dump the real value list so the click-to-edit bridge can
+        // be exercised against actual project data instead of synthetic input.
+        if let Ok(out) = std::env::var("WEAVR_DUMP_VALUES") {
+            let json = serde_json::to_string(&index.unambiguous_values()).unwrap();
+            std::fs::write(&out, json).unwrap();
+            println!("wrote value dump to {out}");
+        }
+        if let Ok(out) = std::env::var("WEAVR_DUMP_ALL") {
+            let json = serde_json::to_string(&index.all_values()).unwrap();
+            std::fs::write(&out, json).unwrap();
+            println!("wrote full dump to {out}");
+        }
     }
 }

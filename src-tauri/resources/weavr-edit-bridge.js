@@ -15,7 +15,7 @@
   const STYLE_ID = "weavr-edit-styles";
   const EDITABLE_ATTR = "data-weavr-field";
 
-  /** @type {Map<string, string>} normalized text -> field id */
+  /** @type {Map<string, Array<{field_id: string, source: string}>>} */
   let valueIndex = new Map();
   /** Bounds how far up the tree a match is worth looking for. */
   let maxValueLength = 0;
@@ -62,6 +62,72 @@
    * a data value), the outermost match wins: it owns the whole string, and
    * nesting editables inside each other would make saves ambiguous.
    */
+  /**
+   * Picks which data field a rendered string belongs to.
+   *
+   * The same words often appear in several fields — a page title duplicated in
+   * pageRegistry and in the section's own data, "Hybrid" as both the
+   * conference mode and a statistic. Sections declare the data file they
+   * render from (data-weavr-source), which usually narrows that to one. If it
+   * doesn't, the text stays non-editable in place: overwriting the wrong field
+   * would silently change a different part of the site.
+   */
+  function resolveField(element, entries) {
+    if (!entries || entries.length === 0) return null;
+    if (entries.length === 1) return entries[0].field_id;
+
+    const declaring = element.closest("[data-weavr-source]");
+    if (!declaring) return null;
+
+    const sources = (declaring.getAttribute("data-weavr-source") || "")
+      .split(/\s+/)
+      .filter(Boolean);
+    const narrowed = entries.filter((e) => sources.includes(e.source));
+
+    return narrowed.length === 1 ? narrowed[0].field_id : null;
+  }
+
+  /** Leaf-ish elements worth testing for a literal + field combination. */
+  function composedElements() {
+    return Array.from(document.body.querySelectorAll("*")).filter((el) => {
+      if (el.closest("script, style, svg, textarea, input, [data-weavr-ignore]")) return false;
+      if (el.children.length > 0) return false;
+      const text = normalize(el.textContent || "");
+      return text.length > 0 && text.length <= maxValueLength;
+    });
+  }
+
+  /**
+   * Finds a field whose value is embedded in this element's text, and returns
+   * the literal text around it. Only accepts an unambiguous, single occurrence
+   * — if the value appears twice, or several fields could fit, there's no way
+   * to know which part of the string the user means to change.
+   */
+  function matchComposed(element) {
+    const text = normalize(element.textContent || "");
+    let found = null;
+
+    for (const [value, entries] of valueIndex) {
+      // Very short values match far too eagerly ("2027" inside a date line).
+      if (value.length < 8 || value.length >= text.length) continue;
+      const at = text.indexOf(value);
+      if (at === -1) continue;
+      if (text.indexOf(value, at + 1) !== -1) continue;
+
+      const fieldId = resolveField(element, entries);
+      if (!fieldId) continue;
+      if (found) return null;
+
+      found = {
+        fieldId,
+        prefix: text.slice(0, at),
+        suffix: text.slice(at + value.length),
+      };
+    }
+
+    return found;
+  }
+
   function elementsToMark() {
     const candidates = new Map();
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
@@ -82,17 +148,25 @@
         const key = normalize(element.textContent || "");
         if (!key || key.length > maxValueLength) break;
 
-        // Weavr only sends text that maps to exactly one field; anything
-        // ambiguous is absent by design and stays non-editable in place.
-        const fieldId = valueIndex.get(key);
-        if (fieldId) candidates.set(element, fieldId);
+        const fieldId = resolveField(element, valueIndex.get(key));
+        if (fieldId) candidates.set(element, { fieldId, prefix: "", suffix: "" });
 
         element = element.parentElement;
       }
     }
 
+    // Text a component builds from a literal plus a field ("Track 5: " + title,
+    // "Welcome to " + shortTitle) matches no field on its own. Remember the
+    // literal parts so an edit can be mapped back to just the field's share of
+    // the string.
+    for (const element of composedElements()) {
+      if (candidates.has(element)) continue;
+      const composed = matchComposed(element);
+      if (composed) candidates.set(element, composed);
+    }
+
     const matches = [];
-    for (const [element, fieldId] of candidates) {
+    for (const [element, match] of candidates) {
       let ancestor = element.parentElement;
       let nested = false;
       while (ancestor) {
@@ -103,7 +177,7 @@
         ancestor = ancestor.parentElement;
       }
       if (!nested && !element.hasAttribute(EDITABLE_ATTR)) {
-        matches.push([element, fieldId]);
+        matches.push([element, match]);
       }
     }
 
@@ -112,10 +186,12 @@
 
   function markEditable() {
     if (!enabled) return;
-    for (const [element, fieldId] of elementsToMark()) {
-      element.setAttribute(EDITABLE_ATTR, fieldId);
+    for (const [element, match] of elementsToMark()) {
+      element.setAttribute(EDITABLE_ATTR, match.fieldId);
       element.setAttribute("contenteditable", "true");
       element.setAttribute("spellcheck", "false");
+      if (match.prefix) element.dataset.weavrPrefix = match.prefix;
+      if (match.suffix) element.dataset.weavrSuffix = match.suffix;
       // Record the last-saved text once, when the element is first adopted.
       // It must NOT be refreshed as the user types, or a rejected save would
       // "roll back" to the unsaved text and the preview would show content
@@ -155,8 +231,26 @@
       return;
     }
 
+    // For text built from a literal plus a field, save only the field's share.
+    // If the user changed the literal part, there's nothing sensible to write,
+    // so put it back rather than guess.
+    const prefix = element.dataset.weavrPrefix || "";
+    const suffix = element.dataset.weavrSuffix || "";
+    let fieldValue = newValue;
+    if (prefix || suffix) {
+      const fits =
+        newValue.startsWith(prefix) &&
+        newValue.endsWith(suffix) &&
+        newValue.length > prefix.length + suffix.length;
+      if (!fits) {
+        element.textContent = original;
+        return;
+      }
+      fieldValue = newValue.slice(prefix.length, newValue.length - suffix.length);
+    }
+
     element.setAttribute("data-weavr-saving", "1");
-    emit("weavr://text-edited", { fieldId, newValue });
+    emit("weavr://text-edited", { fieldId, newValue: fieldValue });
   }
 
   function emit(name, payload) {
@@ -205,7 +299,7 @@
       for (const entry of entries) {
         const key = normalize(entry.value);
         if (!key) continue;
-        valueIndex.set(key, entry.field_id);
+        valueIndex.set(key, entry.fields);
         if (key.length > maxValueLength) maxValueLength = key.length;
       }
       queueRefresh();
@@ -235,10 +329,15 @@
 
     /** Confirms a save landed, so the element stops showing as in-flight. */
     confirmSaved(fieldId, savedValue) {
-      const element = document.querySelector(`[${EDITABLE_ATTR}="${CSS.escape(fieldId)}"]`);
-      if (!element) return;
-      element.removeAttribute("data-weavr-saving");
-      element.dataset.weavrOriginal = normalize(savedValue);
+      document
+        .querySelectorAll(`[${EDITABLE_ATTR}="${CSS.escape(fieldId)}"]`)
+        .forEach((element) => {
+          element.removeAttribute("data-weavr-saving");
+          // Re-attach the literal parts so the baseline matches what's shown.
+          const prefix = element.dataset.weavrPrefix || "";
+          const suffix = element.dataset.weavrSuffix || "";
+          element.dataset.weavrOriginal = normalize(prefix + savedValue + suffix);
+        });
     },
 
     /** True once Weavr has sent this page its editable values. */
@@ -248,12 +347,14 @@
 
     /** Rolls the element back if Rust rejected the write. */
     rejectSave(fieldId) {
-      const element = document.querySelector(`[${EDITABLE_ATTR}="${CSS.escape(fieldId)}"]`);
-      if (!element) return;
-      element.removeAttribute("data-weavr-saving");
-      if (element.dataset.weavrOriginal !== undefined) {
-        element.textContent = element.dataset.weavrOriginal;
-      }
+      document
+        .querySelectorAll(`[${EDITABLE_ATTR}="${CSS.escape(fieldId)}"]`)
+        .forEach((element) => {
+          element.removeAttribute("data-weavr-saving");
+          if (element.dataset.weavrOriginal !== undefined) {
+            element.textContent = element.dataset.weavrOriginal;
+          }
+        });
     },
   };
 
