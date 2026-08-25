@@ -84,24 +84,55 @@
    * doesn't, the text stays non-editable in place: overwriting the wrong field
    * would silently change a different part of the site.
    */
-  /** Candidates left after honouring the section's declared data source. */
+  /**
+   * Every data source declared anywhere above this element.
+   *
+   * Collected from the whole ancestor chain rather than the nearest
+   * declaration alone: an inner element often names a file broadly
+   * ("committeeData") while an outer one names the exact list
+   * ("committeeData.organizingCoreCommittee"). Stopping at the nearest would
+   * take the vaguer of the two and throw away the only thing that identifies
+   * the field.
+   */
+  function declarationsAbove(element) {
+    const levels = [];
+    for (let node = element; node && node !== document.body; node = node.parentElement) {
+      const declared = node.getAttribute?.("data-weavr-source");
+      if (declared) levels.push(declared.split(/\s+/).filter(Boolean));
+    }
+    return levels;
+  }
+
+  /**
+   * Candidates left after honouring the declared data sources.
+   *
+   * Declarations are applied one level at a time, innermost first, and the
+   * first level that pins the text to a single field wins. Merging every
+   * ancestor's declaration into one set doesn't work: an outer section
+   * legitimately names several files, which re-introduces the ambiguity a
+   * nearer, narrower declaration had already settled. Walking outwards only
+   * while still ambiguous also lets a list item inherit its list's identity —
+   * a member card says "committeeData", the group around it says which
+   * committee.
+   *
+   * Within a level, a declaration naming one export ("navigationData.
+   * footerQuickLinks") beats one naming the whole file, since that is the only
+   * thing separating two lists that live in the same file.
+   */
   function narrowBySource(element, entries) {
-    const declaring = element.closest("[data-weavr-source]");
-    if (!declaring) return entries;
+    let best = entries;
 
-    const sources = (declaring.getAttribute("data-weavr-source") || "")
-      .split(/\s+/)
-      .filter(Boolean);
+    for (const sources of declarationsAbove(element)) {
+      const exact = entries.filter((e) => sources.includes(e.qualified_source));
+      const byFile = entries.filter((e) => sources.includes(e.source));
+      const narrowed = exact.length > 0 ? exact : byFile;
 
-    // A declaration may name a whole file ("navigationData") or one export
-    // within it ("navigationData.footerQuickLinks"). Prefer the precise form
-    // when it matches, since it's the only thing that separates two lists
-    // living in the same file.
-    const exact = entries.filter((e) => sources.includes(e.qualified_source));
-    if (exact.length > 0) return exact;
+      if (narrowed.length === 0) continue;
+      if (narrowed.length < best.length || best === entries) best = narrowed;
+      if (best.length === 1) return best;
+    }
 
-    const byFile = entries.filter((e) => sources.includes(e.source));
-    return byFile.length > 0 ? byFile : entries;
+    return best;
   }
 
   /**
