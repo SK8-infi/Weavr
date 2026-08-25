@@ -191,6 +191,8 @@ pub fn build(app: &AppHandle) -> AppResult<()> {
         )
         .map_err(|e| AppError::Other(format!("could not create the editor panel: {e}")))?;
 
+    tint_title_bar(&window);
+
     let handle = app.clone();
     window.on_window_event(move |event| {
         if matches!(event, WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. }) {
@@ -200,3 +202,49 @@ pub fn build(app: &AppHandle) -> AppResult<()> {
 
     Ok(())
 }
+
+/// Paints the native title bar to match the app.
+///
+/// Windows draws it in the user's system accent colour by default, which has
+/// nothing to do with the app — a red accent gives a bright red bar above dark
+/// chrome. Colours here are COLORREF (0x00BBGGRR), not the usual RGB order.
+#[cfg(windows)]
+fn tint_title_bar(window: &Window) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Dwm::{
+        DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR,
+        DWMWA_USE_IMMERSIVE_DARK_MODE,
+    };
+
+    let Ok(raw) = window.hwnd() else { return };
+    let hwnd = HWND(raw.0 as _);
+
+    // Builds older than these attributes just return an error, and a default
+    // title bar is a perfectly fine outcome, so nothing is reported.
+    unsafe {
+        let dark: u32 = 1;
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_USE_IMMERSIVE_DARK_MODE,
+            &dark as *const u32 as *const _,
+            std::mem::size_of::<u32>() as u32,
+        );
+
+        // Warm charcoal caption, warm off-white text, a slightly lifted border.
+        for (attribute, colour) in [
+            (DWMWA_CAPTION_COLOR, 0x0000_0E12u32),
+            (DWMWA_TEXT_COLOR, 0x00F2_F7FAu32),
+            (DWMWA_BORDER_COLOR, 0x0000_1E24u32),
+        ] {
+            let _ = DwmSetWindowAttribute(
+                hwnd,
+                attribute,
+                &colour as *const u32 as *const _,
+                std::mem::size_of::<u32>() as u32,
+            );
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn tint_title_bar(_window: &Window) {}

@@ -106,7 +106,7 @@ export default function OnboardingFlow({ onAuthenticated }) {
         )}
 
         {waiting && deviceCode && (
-          <div className="mt-7 animate-pop rounded-2xl bg-canvas-0 p-5 shadow-float">
+          <div className="mt-7 animate-pop rounded-2xl bg-canvas-0/60 backdrop-blur-2xl backdrop-saturate-150 p-5 shadow-float">
             <p className="text-[12px] leading-relaxed text-canvas-500">
               Enter this code in the browser tab that just opened.
             </p>

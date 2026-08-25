@@ -57,7 +57,7 @@ export default function EditorView({ project, onBack }) {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <header className="bg-canvas-0/70 backdrop-blur-xl flex shrink-0 items-center gap-1.5 px-2.5 py-2 shadow-panel">
+      <header className="bg-canvas-50/70 backdrop-blur-2xl backdrop-saturate-150 flex shrink-0 items-center gap-1.5 px-2.5 py-2 shadow-panel">
         <Button
           variant="ghost"
           size="icon"
@@ -127,7 +127,7 @@ function Rail({ tab, onOpen, onBack }) {
   }, []);
 
   return (
-    <div className="bg-canvas-0/70 backdrop-blur-xl flex h-full flex-col items-center gap-1 py-2.5 shadow-panel">
+    <div className="bg-canvas-50/70 backdrop-blur-2xl backdrop-saturate-150 flex h-full flex-col items-center gap-1 py-2.5 shadow-panel">
       <button
         type="button"
         onClick={onBack}

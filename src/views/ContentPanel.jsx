@@ -30,7 +30,6 @@ export default function ContentPanel({ projectPath }) {
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [openFile, setOpenFile] = useState(null);
-  const [choice, setChoice] = useState(null);
 
   async function reload() {
     try {
@@ -48,8 +47,6 @@ export default function ContentPanel({ projectPath }) {
     const subs = [
       listen("weavr://content-changed", reload),
       listen("weavr://edit-failed", (e) => setError(String(e.payload))),
-      // Clicking text on the site that several fields could have produced.
-      listen("weavr://show-field-choice", (e) => setChoice(e.payload)),
     ];
     return () => subs.forEach((s) => s.then((unlisten) => unlisten()));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -106,18 +103,6 @@ export default function ContentPanel({ projectPath }) {
         )}
       </div>
 
-      {choice && (
-        <FieldChooser
-          choice={choice}
-          groups={summary.groups}
-          onDismiss={() => setChoice(null)}
-          onSaved={() => {
-            setChoice(null);
-            reload();
-          }}
-          onError={setError}
-        />
-      )}
 
       <div className="mt-2 min-h-0 flex-1 overflow-y-auto px-3 pb-3">
         {groups.length === 0 && (
@@ -145,88 +130,12 @@ export default function ContentPanel({ projectPath }) {
   );
 }
 
-/**
- * Shown when text clicked on the site is backed by more than one field.
- *
- * The alternative would be picking one and hoping — which quietly rewrites an
- * unrelated part of the site when it guesses wrong. Asking costs one click and
- * is always correct.
- */
-function FieldChooser({ choice, groups, onDismiss, onSaved, onError }) {
-  // Editing happens inline rather than through window.prompt, which a desktop
-  // webview may simply ignore — leaving the click doing nothing at all.
-  const [picked, setPicked] = useState(null);
-
-  const options = useMemo(() => {
-    const wanted = new Set(choice.fieldIds || []);
-    return groups.flatMap((g) => g.fields).filter((f) => wanted.has(f.id));
-  }, [choice, groups]);
-
-  if (picked) {
-    return (
-      <div className="mx-3 mt-2 animate-fade-up rounded-xl bg-canvas-0 p-3 shadow-raised">
-        <div className="mb-1.5 flex items-start justify-between gap-2">
-          <span className="text-[11px] font-medium text-canvas-700">
-            {friendlyFileName(picked.file)} › {friendlyPath(picked.json_path)}
-          </span>
-          <button
-            type="button"
-            onClick={onDismiss}
-            title="Dismiss"
-            className="shrink-0 text-canvas-400 transition-colors hover:text-canvas-700"
-          >
-            <Icon name="close" className="h-3.5 w-3.5" />
-          </button>
-        </div>
-        <FieldEditor field={picked} onSaved={onSaved} onError={onError} />
-      </div>
-    );
-  }
-
-  return (
-    <div className="mx-3 mt-2 animate-fade-up rounded-xl bg-caution-50 p-3">
-      <div className="flex items-start justify-between gap-2">
-        <p className="text-[11px] leading-relaxed text-caution-700">
-          “{choice.text}” is used in {options.length} places. Which one do you
-          want to change?
-        </p>
-        <button
-          type="button"
-          onClick={onDismiss}
-          title="Dismiss"
-          className="shrink-0 text-caution-700/60 transition-colors hover:text-caution-700"
-        >
-          <Icon name="close" className="h-3.5 w-3.5" />
-        </button>
-      </div>
-
-      <div className="mt-2 flex flex-col gap-1">
-        {options.map((field) => (
-          <button
-            key={field.id}
-            type="button"
-            onClick={() => setPicked(field)}
-            className="rounded-lg bg-canvas-0 px-2.5 py-1.5 text-left text-[11px] text-canvas-700 shadow-panel transition hover:bg-canvas-50"
-          >
-            <span className="block truncate font-medium">
-              {friendlyFileName(field.file)}
-            </span>
-            <span className="block truncate text-canvas-400">
-              {friendlyPath(field.json_path)}
-            </span>
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 function FileGroup({ group, isOpen, onToggle, onSaved, onError }) {
   return (
     <section
       className={cn(
         "overflow-hidden rounded-2xl transition-all duration-200",
-        isOpen ? "bg-canvas-0 shadow-raised" : "hover:bg-canvas-0/60",
+        isOpen ? "bg-canvas-0/60 backdrop-blur-2xl backdrop-saturate-150 shadow-raised" : "hover:bg-canvas-0/60",
       )}
     >
       <button

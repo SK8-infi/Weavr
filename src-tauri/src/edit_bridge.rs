@@ -15,24 +15,21 @@ use crate::state::AppState;
 pub const TEXT_EDITED_EVENT: &str = "weavr://text-edited";
 /// The preview page announcing that its bridge is installed and wants values.
 pub const BRIDGE_READY_EVENT: &str = "weavr://bridge-ready";
-/// Raised by the preview when clicked text matches several fields.
-pub const CHOOSE_FIELD_EVENT: &str = "weavr://choose-field";
-/// Sent on to the panel so the user can say which field they meant.
-///
-/// Deliberately a different name from the event that triggers it: `listen` is
-/// global, so re-emitting the same name would deliver the message straight
-/// back to this handler and recurse until the stack overflowed.
-pub const SHOW_FIELD_CHOICE_EVENT: &str = "weavr://show-field-choice";
 /// Sent to the panel when a write was refused.
 pub const EDIT_FAILED_EVENT: &str = "weavr://edit-failed";
 /// Emitted for the dashboard so it can refresh its content forms after an
 /// in-place edit.
 pub const CONTENT_CHANGED_EVENT: &str = "weavr://content-changed";
 
+/// One or more fields to set to the same new text.
+///
+/// Always a list, even for an ordinary single edit, because text that several
+/// fields share can be changed in one place or in all of them at once, and
+/// both go through the same path.
 #[derive(Debug, Deserialize)]
 struct TextEditedPayload {
-    #[serde(rename = "fieldId")]
-    field_id: String,
+    #[serde(rename = "fieldIds")]
+    field_ids: Vec<String>,
     #[serde(rename = "newValue")]
     new_value: String,
 }
@@ -43,15 +40,6 @@ pub fn register(app: &AppHandle) {
     let ready_handle = app.clone();
     app.listen(BRIDGE_READY_EVENT, move |_event| {
         let _ = crate::commands::preview_commands::push_editable_values(&ready_handle);
-    });
-
-    // Relay the preview's request straight to the panel, which has the field
-    // names and current values needed to present a choice.
-    let choose_handle = app.clone();
-    app.listen(CHOOSE_FIELD_EVENT, move |event| {
-        let payload = serde_json::from_str::<serde_json::Value>(event.payload())
-            .unwrap_or(serde_json::Value::Null);
-        let _ = choose_handle.emit_to(layout::PANEL_LABEL, SHOW_FIELD_CHOICE_EVENT, payload);
     });
 
     let handle = app.clone();
@@ -65,37 +53,40 @@ pub fn register(app: &AppHandle) {
         // Parsing and writing are blocking filesystem work; keep them off the
         // event thread so the preview stays responsive.
         tauri::async_runtime::spawn_blocking(move || {
-            let result = apply_edit(&handle, &payload.field_id, &payload.new_value);
+            let result = apply_edit(&handle, &payload.field_ids, &payload.new_value);
             report_result(&handle, &payload, result);
         });
     });
 }
 
-fn apply_edit(app: &AppHandle, field_id: &str, new_value: &str) -> Result<(), String> {
+fn apply_edit(app: &AppHandle, field_ids: &[String], new_value: &str) -> Result<(), String> {
     let state = app.state::<AppState>();
     let mut project = state.project.lock().unwrap();
     let session = project.as_mut().ok_or("no project is open")?;
 
-    let leaf = session
-        .index
-        .find_by_id(field_id)
-        .ok_or_else(|| format!("unknown field {field_id}"))?
-        .clone();
+    for field_id in field_ids {
+        // Looked up one at a time, and the index rebuilt after each write:
+        // changing a value shifts every byte offset after it in that file, so
+        // a second write using offsets from before the first would land in the
+        // wrong place.
+        let leaf = session
+            .index
+            .find_by_id(field_id)
+            .ok_or_else(|| format!("unknown field {field_id}"))?
+            .clone();
 
-    writer::write_string_field(
-        &session.root,
-        &leaf.file,
-        &leaf.export_name,
-        &leaf.json_path,
-        new_value,
-    )
-    .map_err(|e| e.to_string())?;
+        writer::write_string_field(
+            &session.root,
+            &leaf.file,
+            &leaf.export_name,
+            &leaf.json_path,
+            new_value,
+        )
+        .map_err(|e| e.to_string())?;
 
-    session.edited_files.insert(leaf.file.clone());
-
-    // The edit shifted every byte offset after it in that file, so the index
-    // has to be rebuilt before the next write.
-    session.index = ContentIndex::build(&session.root).map_err(|e| e.to_string())?;
+        session.edited_files.insert(leaf.file.clone());
+        session.index = ContentIndex::build(&session.root).map_err(|e| e.to_string())?;
+    }
 
     Ok(())
 }
@@ -105,25 +96,25 @@ fn report_result(app: &AppHandle, payload: &TextEditedPayload, result: Result<()
         return;
     };
 
-    let field = serde_json::to_string(&payload.field_id).unwrap_or_else(|_| "\"\"".into());
+    let fields = serde_json::to_string(&payload.field_ids).unwrap_or_else(|_| "[]".into());
 
     match result {
         Ok(()) => {
             let value = serde_json::to_string(&payload.new_value).unwrap_or_else(|_| "\"\"".into());
             let _ = preview.eval(&format!(
-                "window.__weavrEditBridge && window.__weavrEditBridge.confirmSaved({field}, {value});"
+                "window.__weavrEditBridge && window.__weavrEditBridge.confirmSaved({fields}, {value});"
             ));
             // The edited string is the key the preview matches on, so refresh
             // its map — otherwise that element stops being editable after one
             // change.
             let _ = crate::commands::preview_commands::push_editable_values(app);
-            let _ = app.emit_to(layout::PANEL_LABEL, CONTENT_CHANGED_EVENT, &payload.field_id);
+            let _ = app.emit_to(layout::PANEL_LABEL, CONTENT_CHANGED_EVENT, &payload.field_ids);
         }
         Err(message) => {
             // Roll the on-screen text back so what the user sees always
             // matches what's actually saved.
             let _ = preview.eval(&format!(
-                "window.__weavrEditBridge && window.__weavrEditBridge.rejectSave({field});"
+                "window.__weavrEditBridge && window.__weavrEditBridge.rejectSave({fields});"
             ));
             let _ = app.emit_to(layout::PANEL_LABEL, EDIT_FAILED_EVENT, message);
         }
@@ -140,12 +131,8 @@ mod tests {
     /// sets disjoint.
     #[test]
     fn no_handler_emits_an_event_it_listens_for() {
-        let listened = [BRIDGE_READY_EVENT, CHOOSE_FIELD_EVENT, TEXT_EDITED_EVENT];
-        let emitted = [
-            SHOW_FIELD_CHOICE_EVENT,
-            CONTENT_CHANGED_EVENT,
-            EDIT_FAILED_EVENT,
-        ];
+        let listened = [BRIDGE_READY_EVENT, TEXT_EDITED_EVENT];
+        let emitted = [CONTENT_CHANGED_EVENT, EDIT_FAILED_EVENT];
 
         for name in emitted {
             assert!(

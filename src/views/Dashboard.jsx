@@ -135,7 +135,7 @@ function TitleBar({ user, onSignedOut }) {
   }
 
   return (
-    <header className="bg-canvas-0/70 backdrop-blur-xl sticky top-0 z-10 flex shrink-0 items-center justify-between px-4 py-2.5 shadow-panel">
+    <header className="bg-canvas-50/70 backdrop-blur-2xl backdrop-saturate-150 sticky top-0 z-10 flex shrink-0 items-center justify-between px-4 py-2.5 shadow-panel">
       <span className="flex items-center gap-2">
         <WeavrMark className="h-[22px] w-[22px]" />
         <span className="text-[13px] font-semibold tracking-[-0.01em] text-canvas-900">
@@ -167,7 +167,7 @@ function RepoRow({ repo, busy, disabled, onSelect }) {
       onClick={onSelect}
       disabled={disabled}
       className={cn(
-        "group flex w-full items-center gap-3 rounded-2xl bg-canvas-0 px-3.5 py-3 text-left",
+        "group flex w-full items-center gap-3 rounded-2xl bg-canvas-0/60 backdrop-blur-2xl backdrop-saturate-150 px-3.5 py-3 text-left",
         "shadow-panel transition-all duration-200 ease-[var(--ease-out-soft)]",
         "hover:-translate-y-px hover:shadow-float",
         "active:translate-y-0 active:scale-[0.995]",
@@ -215,7 +215,7 @@ function RepoSkeleton() {
       {[0, 1, 2, 3].map((i) => (
         <li
           key={i}
-          className="flex items-center gap-3 rounded-2xl bg-canvas-0 px-3.5 py-3 shadow-panel"
+          className="flex items-center gap-3 rounded-2xl bg-canvas-0/60 backdrop-blur-2xl backdrop-saturate-150 px-3.5 py-3 shadow-panel"
         >
           <span className="h-9 w-9 shrink-0 animate-shimmer rounded-xl" />
           <span className="flex-1">
@@ -234,7 +234,7 @@ function RepoSkeleton() {
 function InvalidProject({ project, onBack }) {
   const { repo, info } = project;
   return (
-    <div className="animate-pop rounded-2xl bg-canvas-0 p-6 shadow-float">
+    <div className="animate-pop rounded-2xl bg-canvas-0/60 backdrop-blur-2xl backdrop-saturate-150 p-6 shadow-float">
       <Button variant="ghost" size="sm" onClick={onBack} className="-ml-2 mb-3">
         <Icon name="back" className="h-3.5 w-3.5" />
         Back

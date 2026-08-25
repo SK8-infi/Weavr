@@ -69,7 +69,7 @@ export default function ProjectSetup({ project, onBack, onReady }) {
   const activeIndex = STEPS.findIndex((s) => s.id === phase);
 
   return (
-    <div className="animate-pop rounded-2xl bg-canvas-0 p-6 shadow-float">
+    <div className="animate-pop rounded-2xl bg-canvas-0/60 backdrop-blur-2xl backdrop-saturate-150 p-6 shadow-float">
       <Button
         variant="ghost"
         size="sm"

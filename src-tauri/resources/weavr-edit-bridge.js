@@ -63,6 +63,90 @@
         outline: 2px solid rgb(217, 119, 6);
         background-color: rgba(217, 119, 6, 0.08);
       }
+      /* The inline chooser. Deliberately styled as Weavr's own chrome so it
+         reads as part of the tool, not part of the site being edited. */
+      .weavr-popover {
+        position: absolute;
+        z-index: 2147483647;
+        width: 288px;
+        padding: 12px;
+        border-radius: 14px;
+        background: rgba(28, 25, 23, 0.93);
+        backdrop-filter: blur(20px) saturate(150%);
+        -webkit-backdrop-filter: blur(20px) saturate(150%);
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.08),
+          0 0 0 1px rgba(255, 255, 255, 0.1),
+          0 18px 40px -12px rgba(0, 0, 0, 0.85);
+        font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif;
+        color: #faf7f2;
+        text-align: left;
+        cursor: default;
+      }
+      .weavr-popover-title {
+        font-size: 11px;
+        line-height: 1.5;
+        color: #b5aca3;
+        margin: 0 0 8px;
+      }
+      .weavr-popover-input {
+        width: 100%;
+        box-sizing: border-box;
+        border: 0;
+        border-radius: 9px;
+        padding: 8px 10px;
+        font: inherit;
+        font-size: 13px;
+        color: #faf7f2;
+        background: rgba(0, 0, 0, 0.35);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+        outline: none;
+        resize: vertical;
+        min-height: 34px;
+      }
+      .weavr-popover-input:focus {
+        box-shadow:
+          inset 0 0 0 1.5px #e8a317,
+          0 0 0 4px rgba(232, 163, 23, 0.18);
+      }
+      .weavr-popover-actions {
+        display: flex;
+        gap: 6px;
+        margin-top: 10px;
+      }
+      .weavr-btn {
+        flex: 1;
+        border: 0;
+        border-radius: 9px;
+        padding: 7px 10px;
+        font: inherit;
+        font-size: 11px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: filter 0.15s ease, background-color 0.15s ease;
+      }
+      .weavr-btn-primary {
+        color: #23180a;
+        background-image: linear-gradient(135deg, #f0b429, #b8621d);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
+      }
+      .weavr-btn-primary:hover { filter: brightness(1.08); }
+      .weavr-btn-secondary {
+        color: #ece7e1;
+        background: rgba(255, 255, 255, 0.09);
+      }
+      .weavr-btn-secondary:hover { background: rgba(255, 255, 255, 0.16); }
+      .weavr-popover-hint {
+        margin: 8px 0 0;
+        font-size: 10px;
+        line-height: 1.5;
+        color: #9d938a;
+      }
+      /* Marks the element the chooser is currently attached to. */
+      [data-weavr-focus="1"] {
+        outline: 2px solid #e8a317 !important;
+        background-color: rgba(232, 163, 23, 0.12) !important;
+      }
       /* Holding Ctrl/Cmd switches to using the site rather than editing it. */
       body.weavr-bypass [${EDITABLE_ATTR}] {
         cursor: pointer;
@@ -382,15 +466,117 @@
     }
   }
 
-  /** Hands the choice to the panel, which knows each field's name and value. */
+  let popover = null;
+  let popoverAnchor = null;
+
+  function closePopover() {
+    popover?.remove();
+    popover = null;
+    popoverAnchor?.removeAttribute("data-weavr-focus");
+    popoverAnchor = null;
+  }
+
+  function selectorFor(fieldIds) {
+    const ids = Array.isArray(fieldIds) ? fieldIds : [fieldIds];
+    return ids.flatMap((id) =>
+      Array.from(document.querySelectorAll(`[${EDITABLE_ATTR}="${CSS.escape(id)}"]`)),
+    );
+  }
+
+  /** Keeps the chooser beside its element, and on screen. */
+  function positionPopover(element) {
+    const box = element.getBoundingClientRect();
+    const width = 288;
+    const left = Math.min(
+      Math.max(8, box.left + window.scrollX),
+      window.scrollX + document.documentElement.clientWidth - width - 8,
+    );
+    popover.style.left = `${left}px`;
+    popover.style.top = `${box.bottom + window.scrollY + 8}px`;
+  }
+
+  /**
+   * Asks, on the page itself, which of several fields the user meant.
+   *
+   * The same words can be held by more than one field, and nothing in the
+   * markup separates them. Rather than send the question off to the side
+   * panel — which is usually collapsed, so the click would appear to do
+   * nothing — the choice is offered right where it was made: change this one
+   * occurrence, or every place that shares the text.
+   */
   function onAmbiguousClick(event) {
     if (!enabled || isBypass(event)) return;
     event.preventDefault();
+    event.stopPropagation();
+
     const element = event.currentTarget;
-    emit("weavr://choose-field", {
-      text: normalize(element.textContent || ""),
-      fieldIds: (element.getAttribute(AMBIGUOUS_ATTR) || "").split(" ").filter(Boolean),
+    const fieldIds = (element.getAttribute(AMBIGUOUS_ATTR) || "")
+      .split(" ")
+      .filter(Boolean);
+    if (fieldIds.length === 0) return;
+
+    closePopover();
+    popoverAnchor = element;
+    element.setAttribute("data-weavr-focus", "1");
+
+    const original = normalize(element.textContent || "");
+
+    popover = document.createElement("div");
+    popover.className = "weavr-popover";
+    popover.setAttribute("data-weavr-ignore", "");
+    popover.innerHTML = `
+      <p class="weavr-popover-title">These words are used in ${fieldIds.length} places on your site.</p>
+      <textarea class="weavr-popover-input" rows="2"></textarea>
+      <div class="weavr-popover-actions">
+        <button class="weavr-btn weavr-btn-secondary" data-weavr-action="one">Just here</button>
+        <button class="weavr-btn weavr-btn-primary" data-weavr-action="all">Change all ${fieldIds.length}</button>
+      </div>
+      <p class="weavr-popover-hint">Escape to cancel.</p>
+    `;
+
+    const input = popover.querySelector(".weavr-popover-input");
+    input.value = original;
+
+    const save = (scope) => {
+      const next = normalize(input.value);
+      if (!next || next === original) {
+        closePopover();
+        return;
+      }
+      const targets = scope === "all" ? fieldIds : [fieldIds[0]];
+      element.setAttribute("data-weavr-saving", "1");
+      if (!emit("weavr://text-edited", { fieldIds: targets, newValue: next })) {
+        element.removeAttribute("data-weavr-saving");
+        element.setAttribute("data-weavr-error", "1");
+        console.error("[weavr] edit not saved: the editor bridge is unavailable");
+      }
+      closePopover();
+    };
+
+    popover.addEventListener("click", (e) => {
+      const action = e.target.closest?.("[data-weavr-action]");
+      if (action) save(action.getAttribute("data-weavr-action"));
     });
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closePopover();
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        save("one");
+      }
+    });
+
+    document.body.appendChild(popover);
+    positionPopover(element);
+    input.focus();
+    input.select();
+  }
+
+  // Clicking away or scrolling should dismiss it, like any other popover.
+  function onDocumentPointerDown(event) {
+    if (!popover) return;
+    if (event.target.closest?.(".weavr-popover")) return;
+    if (event.target.closest?.(`[${AMBIGUOUS_ATTR}]`) === popoverAnchor) return;
+    closePopover();
   }
 
   function onKeyDown(event) {
@@ -443,7 +629,7 @@
     }
 
     element.setAttribute("data-weavr-saving", "1");
-    if (!emit("weavr://text-edited", { fieldId, newValue: fieldValue })) {
+    if (!emit("weavr://text-edited", { fieldIds: [fieldId], newValue: fieldValue })) {
       // Never leave an unsaved change looking saved.
       element.removeAttribute("data-weavr-saving");
       element.setAttribute("data-weavr-error", "1");
@@ -578,6 +764,8 @@
       if (enabled) {
         installStyles();
         document.addEventListener("mousedown", onMouseDownCapture, true);
+        document.addEventListener("mousedown", onDocumentPointerDown);
+        window.addEventListener("scroll", closePopover, true);
         document.addEventListener("click", onClickCapture, true);
         document.addEventListener("keydown", trackBypassKey, true);
         document.addEventListener("keyup", trackBypassKey, true);
@@ -589,6 +777,9 @@
         queueRefresh();
       } else {
         document.removeEventListener("mousedown", onMouseDownCapture, true);
+        document.removeEventListener("mousedown", onDocumentPointerDown);
+        window.removeEventListener("scroll", closePopover, true);
+        closePopover();
         document.removeEventListener("click", onClickCapture, true);
         document.removeEventListener("keydown", trackBypassKey, true);
         document.removeEventListener("keyup", trackBypassKey, true);
@@ -612,10 +803,10 @@
       }
     },
 
-    /** Confirms a save landed, so the element stops showing as in-flight. */
-    confirmSaved(fieldId, savedValue) {
-      document
-        .querySelectorAll(`[${EDITABLE_ATTR}="${CSS.escape(fieldId)}"]`)
+    /** Confirms a save landed, so elements stop showing as in-flight. */
+    confirmSaved(fieldIds, savedValue) {
+      closePopover();
+      selectorFor(fieldIds)
         .forEach((element) => {
           element.removeAttribute("data-weavr-saving");
           // Re-attach the literal parts so the baseline matches what's shown.
@@ -630,10 +821,10 @@
       return valueIndex.size > 0;
     },
 
-    /** Rolls the element back if Rust rejected the write. */
-    rejectSave(fieldId) {
-      document
-        .querySelectorAll(`[${EDITABLE_ATTR}="${CSS.escape(fieldId)}"]`)
+    /** Rolls elements back if Rust rejected the write. */
+    rejectSave(fieldIds) {
+      closePopover();
+      selectorFor(fieldIds)
         .forEach((element) => {
           element.removeAttribute("data-weavr-saving");
           if (element.dataset.weavrOriginal !== undefined) {

@@ -3,54 +3,55 @@
 /*
  * Weavr's own interface.
  *
- * Deep indigo-navy chrome against the user's warm ivory site: the split reads
- * instantly as "tool" and "page" without any border between them. A faint grid
- * gives the ground some structure, and light comes from coloured glows rather
- * than drop shadows, which don't read on dark surfaces.
+ * Warm charcoal chrome against the user's ivory site: dark enough that the
+ * split reads instantly as "tool" and "page" without a border between them,
+ * warm enough that it doesn't feel cold beside it. A faint grid gives the
+ * ground structure, frosted panels sit over it, and light comes from coloured
+ * glows rather than drop shadows, which don't read on dark surfaces.
  *
  * The canvas ramp keeps its meaning from the light theme — low numbers are
  * surfaces you place content on, high numbers are text — so component classes
  * carry over unchanged.
  */
 @theme {
-  --color-canvas-0: #161b2b; /* raised surface: cards, panels */
-  --color-canvas-50: #0c0f19; /* the ground */
-  --color-canvas-100: #1e2437; /* hover fill */
-  --color-canvas-200: #2a3149; /* hairlines, dividers */
-  --color-canvas-300: #3b4463; /* stronger edges */
+  --color-canvas-0: #1c1917; /* raised surface: cards, panels */
+  --color-canvas-50: #12100e; /* the ground */
+  --color-canvas-100: #262220; /* hover fill */
+  --color-canvas-200: #332e2a; /* hairlines, dividers */
+  --color-canvas-300: #48413b; /* stronger edges */
   /* Light enough to clear 4.5:1 against both the ground and a raised surface
-     — the obvious muted grey measured 3.9:1, which fails at these sizes. */
-  --color-canvas-400: #7d86a8; /* muted text */
-  --color-canvas-500: #99a2be; /* secondary text */
-  --color-canvas-600: #b3bad2;
-  --color-canvas-700: #ccd2e4;
-  --color-canvas-800: #e2e6f1;
-  --color-canvas-900: #f4f6fb; /* primary text */
-  --color-canvas-950: #05070e; /* deepest: log output */
+     — the obvious muted tone measured under 4:1, which fails at these sizes. */
+  --color-canvas-400: #9d938a; /* muted text */
+  --color-canvas-500: #b5aca3; /* secondary text */
+  --color-canvas-600: #cdc5bc;
+  --color-canvas-700: #ded8d1;
+  --color-canvas-800: #ece7e1;
+  --color-canvas-900: #faf7f2; /* primary text */
+  --color-canvas-950: #0a0908; /* deepest: log output */
 
-  /* Violet with a little more saturation than the light theme, so it holds up
-     against a dark ground without glowing out. */
-  --color-brand-50: #1d1c3f;
-  --color-brand-100: #272554;
-  --color-brand-200: #38337d;
-  --color-brand-300: #5b51c4;
-  --color-brand-400: #8b7bff;
-  --color-brand-500: #7c6cff;
-  --color-brand-600: #6a55f5;
-  --color-brand-700: #5940d8;
+  /* Gold through amber. Warm enough to sit on charcoal without turning
+     muddy, and it echoes the gold already used across the conference site. */
+  --color-brand-50: #33240d;
+  --color-brand-100: #422e10;
+  --color-brand-200: #6b4a16;
+  --color-brand-300: #b8801f;
+  --color-brand-400: #f0b429;
+  --color-brand-500: #e8a317;
+  --color-brand-600: #d98324;
+  --color-brand-700: #b8621d;
 
-  --color-positive-50: #0c2b23;
-  --color-positive-100: #123b30;
+  --color-positive-50: #0e2a21;
+  --color-positive-100: #14382c;
   --color-positive-600: #34d399;
   --color-positive-700: #6ee7b7;
 
-  --color-caution-50: #2e2411;
-  --color-caution-100: #3d3016;
+  --color-caution-50: #33260f;
+  --color-caution-100: #453314;
   --color-caution-600: #fbbf24;
   --color-caution-700: #fcd34d;
 
-  --color-critical-50: #331520;
-  --color-critical-100: #451a28;
+  --color-critical-50: #35171a;
+  --color-critical-100: #481e22;
   --color-critical-600: #fb7185;
   --color-critical-700: #fda4af;
 
@@ -72,7 +73,7 @@
     0 0 0 1px rgba(255, 255, 255, 0.1), 0 18px 40px -12px rgba(0, 0, 0, 0.8);
   --shadow-accent:
     inset 0 1px 0 rgba(255, 255, 255, 0.22),
-    0 6px 20px -6px rgba(124, 108, 255, 0.65);
+    0 6px 20px -6px rgba(232, 163, 23, 0.5);
   --shadow-inset-top: inset 0 1px 0 rgba(255, 255, 255, 0.18);
 
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
@@ -114,8 +115,8 @@ body::before {
   z-index: 0;
   pointer-events: none;
   background-image:
-    linear-gradient(rgba(148, 163, 220, 0.07) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(148, 163, 220, 0.07) 1px, transparent 1px);
+    linear-gradient(rgba(214, 190, 155, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(214, 190, 155, 0.06) 1px, transparent 1px);
   background-size: 34px 34px;
   background-position: center center;
   /* Strongest in the middle, gone at the corners. */
@@ -136,13 +137,18 @@ body::after {
   pointer-events: none;
   background-image:
     radial-gradient(
-      42rem 26rem at 78% -8%,
-      rgba(124, 108, 255, 0.2),
+      44rem 28rem at 80% -10%,
+      rgba(240, 180, 41, 0.16),
       transparent 62%
     ),
     radial-gradient(
-      34rem 22rem at -12% 12%,
-      rgba(56, 189, 248, 0.09),
+      34rem 22rem at -12% 14%,
+      rgba(232, 122, 90, 0.1),
+      transparent 60%
+    ),
+    radial-gradient(
+      30rem 20rem at 40% 108%,
+      rgba(240, 180, 41, 0.06),
       transparent 60%
     );
 }
@@ -201,9 +207,9 @@ textarea,
   .text-brand-gradient {
     background-image: linear-gradient(
       120deg,
-      var(--color-brand-400),
-      #c4b5fd 55%,
-      #7dd3fc
+      #ffd97a,
+      var(--color-brand-400) 45%,
+      #e8875a
     );
     -webkit-background-clip: text;
     background-clip: text;
@@ -214,6 +220,12 @@ textarea,
   .edge-lit {
     box-shadow: var(--shadow-inset-top);
   }
+
+  /*
+   * Frosting is applied with Tailwind's own backdrop utilities at the point of
+   * use, not a class defined here: a hand-written rule loses its
+   * backdrop-filter in the CSS pipeline and silently degrades to a flat tint.
+   */
 
   @keyframes weavr-fade-up {
     from {
