@@ -66,7 +66,9 @@
       /* The inline chooser. Deliberately styled as Weavr's own chrome so it
          reads as part of the tool, not part of the site being edited. */
       .weavr-popover {
-        position: absolute;
+        /* Fixed, so no ancestor's overflow can clip it and no scroll offset
+           has to be reasoned about. */
+        position: fixed;
         z-index: 2147483647;
         width: 288px;
         padding: 12px;
@@ -445,8 +447,11 @@
     if (!enabled) return;
     for (const [element, match] of elementsToMark()) {
       if (match.ambiguous) {
+        // Only the attribute is set — the click is caught by a delegated
+        // listener on the document. A listener bound here would be lost the
+        // moment the component re-rendered, which the hero carousel does on a
+        // timer: the outline stayed but clicking it did nothing.
         element.setAttribute(AMBIGUOUS_ATTR, match.ambiguous.join(" "));
-        element.addEventListener("click", onAmbiguousClick);
         continue;
       }
       element.setAttribute(EDITABLE_ATTR, match.fieldId);
@@ -483,16 +488,21 @@
     );
   }
 
-  /** Keeps the chooser beside its element, and on screen. */
+  /** Keeps the chooser beside its element, and fully on screen. */
   function positionPopover(element) {
     const box = element.getBoundingClientRect();
     const width = 288;
-    const left = Math.min(
-      Math.max(8, box.left + window.scrollX),
-      window.scrollX + document.documentElement.clientWidth - width - 8,
-    );
+    const height = popover.offsetHeight || 150;
+    const viewportW = document.documentElement.clientWidth;
+    const viewportH = document.documentElement.clientHeight;
+
+    const left = Math.min(Math.max(8, box.left), viewportW - width - 8);
+    // Flip above the element when there isn't room beneath it.
+    const below = box.bottom + 8;
+    const top = below + height > viewportH ? Math.max(8, box.top - height - 8) : below;
+
     popover.style.left = `${left}px`;
-    popover.style.top = `${box.bottom + window.scrollY + 8}px`;
+    popover.style.top = `${top}px`;
   }
 
   /**
@@ -506,10 +516,14 @@
    */
   function onAmbiguousClick(event) {
     if (!enabled || isBypass(event)) return;
+    const element = event.target.closest?.(`[${AMBIGUOUS_ATTR}]`);
+    if (!element) return;
+    // Clicks inside the chooser itself are its own business.
+    if (event.target.closest?.(".weavr-popover")) return;
+
     event.preventDefault();
     event.stopPropagation();
 
-    const element = event.currentTarget;
     const fieldIds = (element.getAttribute(AMBIGUOUS_ATTR) || "")
       .split(" ")
       .filter(Boolean);
@@ -764,6 +778,7 @@
       if (enabled) {
         installStyles();
         document.addEventListener("mousedown", onMouseDownCapture, true);
+        document.addEventListener("click", onAmbiguousClick, true);
         document.addEventListener("mousedown", onDocumentPointerDown);
         window.addEventListener("scroll", closePopover, true);
         document.addEventListener("click", onClickCapture, true);
@@ -777,6 +792,7 @@
         queueRefresh();
       } else {
         document.removeEventListener("mousedown", onMouseDownCapture, true);
+        document.removeEventListener("click", onAmbiguousClick, true);
         document.removeEventListener("mousedown", onDocumentPointerDown);
         window.removeEventListener("scroll", closePopover, true);
         closePopover();
@@ -796,10 +812,9 @@
           element.removeEventListener("keydown", onKeyDown);
           element.removeEventListener("blur", onBlur);
         });
-        document.querySelectorAll(`[${AMBIGUOUS_ATTR}]`).forEach((element) => {
-          element.removeAttribute(AMBIGUOUS_ATTR);
-          element.removeEventListener("click", onAmbiguousClick);
-        });
+        document
+          .querySelectorAll(`[${AMBIGUOUS_ATTR}]`)
+          .forEach((element) => element.removeAttribute(AMBIGUOUS_ATTR));
       }
     },
 
