@@ -4,3 +4,4 @@ pub mod preview_commands;
 pub mod publish_commands;
 pub mod repo_commands;
 pub mod setup_commands;
+pub mod structure_commands;

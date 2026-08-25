@@ -155,6 +155,147 @@ pub fn parse_project(project_root: &Path) -> AppResult<Vec<LeafRecord>> {
     Ok(leaves)
 }
 
+/// Byte ranges of each element of one array in a data file.
+///
+/// Everything structural a user might rearrange is an array: the sections on a
+/// page, the pages on the site, the members of a committee. Locating the
+/// elements is enough to duplicate, remove or reorder any of them by moving
+/// bytes, without needing to understand their contents.
+#[derive(Debug, Clone)]
+pub struct ArrayLocation {
+    /// Byte range of each element, in source order.
+    pub elements: Vec<(usize, usize)>,
+}
+
+pub fn locate_array(
+    relative_path: &str,
+    source: &str,
+    export_name: &str,
+    array_path: &str,
+) -> AppResult<ArrayLocation> {
+    let mut parser = js_parser()?;
+    let tree = parser
+        .parse(source, None)
+        .ok_or_else(|| AppError::Other(format!("could not parse {relative_path}")))?;
+
+    let root = tree.root_node();
+    let mut cursor = root.walk();
+
+    for child in root.named_children(&mut cursor) {
+        let Some(declaration) = (match child.kind() {
+            "export_statement" => child.child_by_field_name("declaration"),
+            _ => None,
+        }) else {
+            continue;
+        };
+
+        let mut decl_cursor = declaration.walk();
+        for declarator in declaration.named_children(&mut decl_cursor) {
+            if declarator.kind() != "variable_declarator" {
+                continue;
+            }
+            let (Some(name_node), Some(value_node)) = (
+                declarator.child_by_field_name("name"),
+                declarator.child_by_field_name("value"),
+            ) else {
+                continue;
+            };
+            if node_text(&name_node, source) != export_name {
+                continue;
+            }
+            if let Some(array) = descend_to(&value_node, array_path, source) {
+                return array_location(&array);
+            }
+        }
+    }
+
+    Err(AppError::Other(format!(
+        "could not find {export_name}{} in {relative_path}",
+        if array_path.is_empty() {
+            String::new()
+        } else {
+            format!(".{array_path}")
+        }
+    )))
+}
+
+/// Walks a dotted/indexed path ("sections", "groups[2].items") from a node.
+fn descend_to<'a>(node: &Node<'a>, path: &str, source: &str) -> Option<Node<'a>> {
+    let mut current = *node;
+
+    for segment in path.split('.').filter(|s| !s.is_empty()) {
+        let (name, indices) = split_indices(segment);
+
+        if !name.is_empty() {
+            current = object_value(&current, name, source)?;
+        }
+        for index in indices {
+            current = array_element(&current, index)?;
+        }
+    }
+
+    Some(current)
+}
+
+/// "groups[2][0]" -> ("groups", [2, 0])
+fn split_indices(segment: &str) -> (&str, Vec<usize>) {
+    let name_end = segment.find('[').unwrap_or(segment.len());
+    let (name, rest) = segment.split_at(name_end);
+    let indices = rest
+        .split(']')
+        .filter_map(|part| part.trim_start_matches('[').parse::<usize>().ok())
+        .collect();
+    (name, indices)
+}
+
+fn object_value<'a>(node: &Node<'a>, key: &str, source: &str) -> Option<Node<'a>> {
+    if node.kind() != "object" {
+        return None;
+    }
+    let mut cursor = node.walk();
+    let found = node.named_children(&mut cursor).find_map(|pair| {
+        if pair.kind() != "pair" {
+            return None;
+        }
+        let key_node = pair.child_by_field_name("key")?;
+        if property_key_name(&key_node, source) != key {
+            return None;
+        }
+        pair.child_by_field_name("value")
+    });
+    found
+}
+
+fn array_element<'a>(node: &Node<'a>, index: usize) -> Option<Node<'a>> {
+    if node.kind() != "array" {
+        return None;
+    }
+    let mut cursor = node.walk();
+    let found = node
+        .named_children(&mut cursor)
+        .filter(|child| child.kind() != "comment")
+        .nth(index);
+    found
+}
+
+fn array_location(node: &Node) -> AppResult<ArrayLocation> {
+    if node.kind() != "array" {
+        return Err(AppError::Other(format!(
+            "expected a list but found {}",
+            node.kind()
+        )));
+    }
+
+    let mut cursor = node.walk();
+    let elements: Vec<(usize, usize)> = node
+        .named_children(&mut cursor)
+        .filter(|child| child.kind() != "comment")
+        .map(|child| (child.start_byte(), child.end_byte()))
+        .collect();
+
+    Ok(ArrayLocation { elements })
+}
+
 fn collect_leaves(
     file: &str,
     export_name: &str,

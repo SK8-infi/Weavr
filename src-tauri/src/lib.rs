@@ -17,6 +17,9 @@ use commands::preview_commands::{preview_start, preview_stop};
 use commands::publish_commands::{publish_now, publish_pending};
 use commands::repo_commands::{repo_clone, repo_list};
 use commands::setup_commands::project_install;
+use commands::structure_commands::{
+    structure_duplicate, structure_lists, structure_move, structure_remove,
+};
 use nodejs::preview_server::{stop_all_blocking, PreviewRegistry};
 use state::AppState;
 use tauri::{Manager, RunEvent};
@@ -48,7 +51,11 @@ pub fn run() {
             content_editable_values,
             content_update,
             publish_pending,
-            publish_now
+            publish_now,
+            structure_lists,
+            structure_duplicate,
+            structure_remove,
+            structure_move
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
