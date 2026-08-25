@@ -1,23 +1,26 @@
 import { useEffect, useMemo, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "../lib/tauri";
+import { fieldClasses, FieldLabel } from "../components/ui/Field";
 import { cn } from "../utils/cn";
 
 /** "src/data/committeeData.js" -> "Committee" */
 function friendlyFileName(file) {
   const base = file.split("/").pop()?.replace(/\.js$/, "") ?? file;
-  const withoutSuffix = base.replace(/Data$/, "");
-  const spaced = withoutSuffix.replace(/([a-z0-9])([A-Z])/g, "$1 $2");
+  const spaced = base.replace(/Data$/, "").replace(/([a-z0-9])([A-Z])/g, "$1 $2");
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
 
-/** "documents[0].title" -> "Documents 1 › title" */
+/** "documents[0].title" -> "Documents 1 › Title" */
 function friendlyPath(jsonPath) {
-  if (!jsonPath) return "value";
+  if (!jsonPath) return "Value";
   return jsonPath
     .replace(/\[(\d+)\]/g, (_, i) => ` ${Number(i) + 1}`)
     .split(".")
-    .map((part) => part.replace(/([a-z0-9])([A-Z])/g, "$1 $2"))
+    .map((part) => {
+      const words = part.replace(/([a-z0-9])([A-Z])/g, "$1 $2");
+      return words.charAt(0).toUpperCase() + words.slice(1);
+    })
     .join(" › ");
 }
 
@@ -29,8 +32,7 @@ export default function ContentPanel({ projectPath }) {
 
   async function reload() {
     try {
-      const next = await invoke("content_load", { projectPath });
-      setSummary(next);
+      setSummary(await invoke("content_load", { projectPath }));
       setError("");
     } catch (err) {
       setError(String(err));
@@ -39,16 +41,13 @@ export default function ContentPanel({ projectPath }) {
 
   useEffect(() => {
     reload();
-
-    // An in-place edit on the preview changes the same data the forms show,
-    // so pull the new values in rather than letting the panel drift.
-    const pending = [
+    // An in-place edit changes the same data these forms show, so pull the new
+    // values in rather than letting the panel drift out of date.
+    const subs = [
       listen("weavr://content-changed", reload),
-      listen("weavr://edit-failed", (event) => setError(String(event.payload))),
+      listen("weavr://edit-failed", (e) => setError(String(e.payload))),
     ];
-    return () => {
-      pending.forEach((p) => p.then((unlisten) => unlisten()));
-    };
+    return () => subs.forEach((s) => s.then((unlisten) => unlisten()));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectPath]);
 
@@ -56,59 +55,76 @@ export default function ContentPanel({ projectPath }) {
     if (!summary) return [];
     const term = search.trim().toLowerCase();
     if (!term) return summary.groups;
-
     return summary.groups
       .map((group) => ({
         ...group,
         fields: group.fields.filter(
-          (field) =>
-            field.value.toLowerCase().includes(term) ||
-            field.json_path.toLowerCase().includes(term),
+          (f) =>
+            f.value.toLowerCase().includes(term) ||
+            f.json_path.toLowerCase().includes(term),
         ),
       }))
       .filter((group) => group.fields.length > 0);
   }, [summary, search]);
 
-  if (error && !summary) {
-    return <p className="p-6 text-sm text-red-600">{error}</p>;
+  if (!summary) {
+    return (
+      <div className="p-4">
+        {error ? (
+          <p className="rounded-xl bg-critical-50 px-4 py-3 text-[12px] text-critical-700">
+            {error}
+          </p>
+        ) : (
+          <div className="flex flex-col gap-1.5" aria-hidden="true">
+            {[0, 1, 2, 3, 4].map((i) => (
+              <div key={i} className="h-10 animate-shimmer rounded-lg" />
+            ))}
+          </div>
+        )}
+      </div>
+    );
   }
 
-  if (!summary) {
-    return <p className="p-6 text-sm text-canvas-800/50">Reading your site's content…</p>;
-  }
+  const searching = Boolean(search.trim());
 
   return (
     <div className="flex h-full flex-col">
-      <div className="border-b border-canvas-200 px-4 py-3">
+      <div className="shrink-0 px-3 pt-3">
         <input
           type="search"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search all text on your site…"
-          className="w-full rounded-lg border border-canvas-200 px-3 py-2 text-sm outline-none focus:border-brand-500"
+          placeholder="Search all text on your site"
+          className="w-full rounded-lg bg-canvas-0 px-3 py-2 text-[13px] shadow-panel outline-none transition placeholder:text-canvas-400 focus:shadow-[0_0_0_1px_var(--color-brand-500),0_0_0_4px_var(--color-brand-100)]"
         />
-        <p className="mt-2 text-xs text-canvas-800/50">
-          {summary.clickable_count} items can be edited by clicking them in the preview.
-          {summary.forms_only_count > 0 &&
-            ` ${summary.forms_only_count} repeat elsewhere on the site, so edit those here.`}
-        </p>
-        {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
+        {error && (
+          <p className="mt-2 rounded-lg bg-critical-50 px-3 py-2 text-[11px] leading-relaxed text-critical-700">
+            {error}
+          </p>
+        )}
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="mt-2 min-h-0 flex-1 overflow-y-auto px-3 pb-3">
         {groups.length === 0 && (
-          <p className="p-4 text-sm text-canvas-800/50">Nothing matches that search.</p>
+          <p className="px-1 py-6 text-center text-[12px] text-canvas-400">
+            Nothing matches that.
+          </p>
         )}
-        {groups.map((group) => (
-          <FileGroup
-            key={group.file}
-            group={group}
-            isOpen={openFile === group.file || Boolean(search.trim())}
-            onToggle={() => setOpenFile(openFile === group.file ? null : group.file)}
-            onSaved={reload}
-            onError={setError}
-          />
-        ))}
+
+        <div className="flex flex-col gap-1">
+          {groups.map((group) => (
+            <FileGroup
+              key={group.file}
+              group={group}
+              isOpen={openFile === group.file || searching}
+              onToggle={() =>
+                setOpenFile(openFile === group.file ? null : group.file)
+              }
+              onSaved={reload}
+              onError={setError}
+            />
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -116,20 +132,35 @@ export default function ContentPanel({ projectPath }) {
 
 function FileGroup({ group, isOpen, onToggle, onSaved, onError }) {
   return (
-    <section className="border-b border-canvas-200">
+    <section
+      className={cn(
+        "overflow-hidden rounded-xl transition-colors",
+        isOpen ? "bg-canvas-0 shadow-panel" : "hover:bg-canvas-100",
+      )}
+    >
       <button
         type="button"
         onClick={onToggle}
-        className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-canvas-100"
+        className="flex w-full items-center gap-2 px-3 py-2.5 text-left"
       >
-        <span className="text-sm font-medium text-canvas-900">
+        <span
+          className={cn(
+            "text-[10px] text-canvas-400 transition-transform duration-200",
+            isOpen && "rotate-90",
+          )}
+        >
+          ▶
+        </span>
+        <span className="flex-1 truncate text-[13px] font-medium text-canvas-800">
           {friendlyFileName(group.file)}
         </span>
-        <span className="text-xs text-canvas-800/40">{group.fields.length}</span>
+        <span className="shrink-0 rounded-full bg-canvas-100 px-1.5 py-px text-[10px] text-canvas-500">
+          {group.fields.length}
+        </span>
       </button>
 
       {isOpen && (
-        <div className="flex flex-col gap-3 bg-canvas-50 px-4 pb-4">
+        <div className="flex animate-fade-up flex-col gap-3 px-3 pb-3.5">
           {group.fields.map((field) => (
             <FieldEditor
               key={field.id}
@@ -146,41 +177,43 @@ function FileGroup({ group, isOpen, onToggle, onSaved, onError }) {
 
 function FieldEditor({ field, onSaved, onError }) {
   const [draft, setDraft] = useState(field.value);
-  const [status, setStatus] = useState("idle");
+  const [busy, setBusy] = useState(false);
 
-  // A click-to-edit change on the preview updates this same field, so track
-  // the incoming value unless the user is mid-edit.
+  // A click-to-edit change on the site updates this same field, so follow the
+  // incoming value unless the user is mid-edit.
   useEffect(() => {
-    if (status === "idle") setDraft(field.value);
+    if (!busy) setDraft(field.value);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [field.value]);
 
   const isDirty = draft !== field.value;
-  const isLong = field.value.length > 80;
+  const isLong = field.value.length > 70;
 
   async function save() {
     if (!isDirty) return;
-    setStatus("saving");
+    setBusy(true);
     try {
       await invoke("content_update", { fieldId: field.id, newValue: draft });
-      setStatus("idle");
       onSaved();
     } catch (err) {
-      setStatus("idle");
       setDraft(field.value);
       onError(String(err));
+    } finally {
+      setBusy(false);
     }
   }
 
-  const InputTag = isLong ? "textarea" : "input";
+  const Tag = isLong ? "textarea" : "input";
 
   return (
     <label className="flex flex-col gap-1">
-      <span className="text-xs text-canvas-800/50">{friendlyPath(field.json_path)}</span>
-      <InputTag
+      <FieldLabel hint={isDirty ? "Unsaved" : undefined}>
+        {friendlyPath(field.json_path)}
+      </FieldLabel>
+      <Tag
         value={draft}
         rows={isLong ? 3 : undefined}
-        disabled={status === "saving"}
+        disabled={busy}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={save}
         onKeyDown={(e) => {
@@ -190,11 +223,7 @@ function FieldEditor({ field, onSaved, onError }) {
           }
           if (e.key === "Escape") setDraft(field.value);
         }}
-        className={cn(
-          "rounded-lg border bg-white px-3 py-2 text-sm outline-none",
-          isDirty ? "border-brand-500" : "border-canvas-200",
-          status === "saving" && "opacity-60",
-        )}
+        className={fieldClasses(isDirty, busy)}
       />
     </label>
   );

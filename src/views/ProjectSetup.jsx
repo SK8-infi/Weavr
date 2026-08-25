@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "../lib/tauri";
+import Button from "../components/ui/Button";
 
 const PHASE = {
   INSTALLING: "installing",
@@ -9,12 +10,17 @@ const PHASE = {
   FAILED: "failed",
 };
 
+const STEPS = [
+  { id: PHASE.INSTALLING, label: "Preparing your website" },
+  { id: PHASE.STARTING_PREVIEW, label: "Opening the preview" },
+];
+
 export default function ProjectSetup({ project, onBack, onReady }) {
   const { repo, info } = project;
   const [phase, setPhase] = useState(PHASE.INSTALLING);
   const [log, setLog] = useState([]);
   const [errorMessage, setErrorMessage] = useState("");
-  const [previewUrl, setPreviewUrl] = useState("");
+  const [showLog, setShowLog] = useState(false);
   const logEndRef = useRef(null);
 
   useEffect(() => {
@@ -23,7 +29,7 @@ export default function ProjectSetup({ project, onBack, onReady }) {
 
     listen("install://progress", (event) => {
       if (event.payload.project_path !== info.local_path) return;
-      setLog((prev) => [...prev.slice(-200), event.payload.line]);
+      setLog((prev) => [...prev.slice(-300), event.payload.line]);
     }).then((fn) => {
       unlisten = fn;
     });
@@ -36,7 +42,6 @@ export default function ProjectSetup({ project, onBack, onReady }) {
       })
       .then((url) => {
         if (cancelled || !url) return;
-        setPreviewUrl(url);
         setPhase(PHASE.READY);
         onReady(url);
       })
@@ -44,61 +49,110 @@ export default function ProjectSetup({ project, onBack, onReady }) {
         if (cancelled) return;
         setPhase(PHASE.FAILED);
         setErrorMessage(String(err));
+        setShowLog(true);
       });
 
     return () => {
       cancelled = true;
       if (unlisten) unlisten();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [info.local_path]);
 
   useEffect(() => {
-    logEndRef.current?.scrollIntoView({ block: "end" });
-  }, [log]);
+    if (showLog) logEndRef.current?.scrollIntoView({ block: "end" });
+  }, [log, showLog]);
+
+  const failed = phase === PHASE.FAILED;
+  const activeIndex = STEPS.findIndex((s) => s.id === phase);
 
   return (
-    <div className="rounded-xl border border-canvas-200 bg-white p-6 shadow-panel">
-      <button
-        type="button"
+    <div className="animate-fade-up rounded-2xl bg-canvas-0 p-6 shadow-raised">
+      <Button
+        variant="ghost"
+        size="sm"
         onClick={() => {
-          // Tear the dev server (and its preview window) down rather than
-          // leaving a node process running for a project we've left.
           invoke("preview_stop", { projectPath: info.local_path }).catch(() => {});
           onBack();
         }}
-        className="mb-4 text-sm text-canvas-800/50 hover:text-canvas-900"
+        className="-ml-2 mb-3"
       >
-        ← Back to repositories
-      </button>
+        ← Back
+      </Button>
 
-      <h2 className="mb-1 text-lg font-semibold text-canvas-900">{repo.full_name}</h2>
+      <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-canvas-900">
+        {repo.name}
+      </h2>
+      <p className="mt-1 text-[12px] text-canvas-400">
+        This takes a few minutes the first time only.
+      </p>
 
-      {phase === PHASE.INSTALLING && (
-        <p className="mb-4 text-sm text-canvas-800/60">
-          Setting up your website — this only takes a while the first time.
+      <ol className="mt-5 flex flex-col gap-2.5">
+        {STEPS.map((step, index) => {
+          const done = !failed && activeIndex > index;
+          const active = !failed && activeIndex === index;
+          return (
+            <li key={step.id} className="flex items-center gap-2.5">
+              <StepDot done={done} active={active} failed={failed && activeIndex === index} />
+              <span
+                className={
+                  done
+                    ? "text-[13px] text-canvas-400"
+                    : active
+                      ? "text-[13px] font-medium text-canvas-900"
+                      : "text-[13px] text-canvas-400"
+                }
+              >
+                {step.label}
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+
+      {failed && (
+        <p className="mt-5 rounded-xl bg-critical-50 px-4 py-3 text-[12px] leading-relaxed text-critical-700">
+          {errorMessage}
         </p>
       )}
-      {phase === PHASE.STARTING_PREVIEW && (
-        <p className="mb-4 text-sm text-canvas-800/60">Starting the live preview…</p>
-      )}
-      {phase === PHASE.READY && (
-        <div className="mb-4">
-          <p className="text-sm text-green-700">
-            Your website is running in the preview window.
-          </p>
-          <p className="text-xs text-canvas-800/50">{previewUrl}</p>
-        </div>
-      )}
-      {phase === PHASE.FAILED && (
-        <p className="mb-4 text-sm text-red-600">{errorMessage}</p>
-      )}
 
-      {phase !== PHASE.READY && (
-        <pre className="max-h-64 overflow-y-auto rounded-lg bg-canvas-950 p-4 text-xs leading-relaxed text-canvas-100">
+      <button
+        type="button"
+        onClick={() => setShowLog((v) => !v)}
+        className="mt-4 text-[11px] text-canvas-400 transition-colors hover:text-canvas-700"
+      >
+        {showLog ? "Hide details" : "Show details"}
+      </button>
+
+      {showLog && (
+        <pre className="mt-2 max-h-56 overflow-y-auto rounded-xl bg-canvas-950 p-3.5 font-mono text-[11px] leading-relaxed text-canvas-300">
           {log.length === 0 ? "Starting…" : log.join("\n")}
           <span ref={logEndRef} />
         </pre>
       )}
     </div>
   );
+}
+
+function StepDot({ done, active, failed }) {
+  if (failed) {
+    return (
+      <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-critical-600 text-[10px] font-bold text-white">
+        !
+      </span>
+    );
+  }
+  if (done) {
+    return (
+      <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-positive-600 text-[9px] font-bold text-white">
+        ✓
+      </span>
+    );
+  }
+  if (active) {
+    return (
+      <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-[1.5px] border-brand-500 border-t-transparent" />
+    );
+  }
+  return <span className="h-4 w-4 shrink-0 rounded-full bg-canvas-200" />;
 }

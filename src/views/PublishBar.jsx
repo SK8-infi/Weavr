@@ -1,10 +1,18 @@
 import { useCallback, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "../lib/tauri";
+import Button from "../components/ui/Button";
+
+const TONE = {
+  good: "bg-positive-50 text-positive-700",
+  warn: "bg-caution-50 text-caution-700",
+  bad: "bg-critical-50 text-critical-700",
+  muted: "bg-canvas-100 text-canvas-500",
+};
 
 export default function PublishBar() {
   const [pending, setPending] = useState([]);
-  const [state, setState] = useState("idle");
+  const [publishing, setPublishing] = useState(false);
   const [notice, setNotice] = useState(null);
 
   const refresh = useCallback(() => {
@@ -15,24 +23,26 @@ export default function PublishBar() {
 
   useEffect(() => {
     refresh();
-    const pendingListen = listen("weavr://content-changed", refresh);
+    const sub = listen("weavr://content-changed", () => {
+      refresh();
+      // A fresh edit makes an older outcome message misleading.
+      setNotice(null);
+    });
     return () => {
-      pendingListen.then((unlisten) => unlisten());
+      sub.then((unlisten) => unlisten());
     };
   }, [refresh]);
 
   async function publish() {
-    setState("publishing");
+    setPublishing(true);
     setNotice(null);
     try {
       const outcome = await invoke("publish_now");
-      setState("idle");
       refresh();
-
       if (outcome.status === "published") {
         setNotice({
           tone: "good",
-          text: `Published. Your site will update in a minute or two.`,
+          text: "Published. Your site updates in a minute or two.",
         });
       } else if (outcome.status === "nothing_to_do") {
         setNotice({ tone: "muted", text: "Nothing new to publish." });
@@ -40,41 +50,43 @@ export default function PublishBar() {
         setNotice({ tone: "warn", text: outcome.message });
       }
     } catch (err) {
-      setState("idle");
       setNotice({ tone: "bad", text: String(err) });
+    } finally {
+      setPublishing(false);
     }
   }
 
-  const hasChanges = pending.length > 0;
-
-  const toneClass = {
-    good: "text-green-700",
-    warn: "text-amber-700",
-    bad: "text-red-600",
-    muted: "text-canvas-800/50",
-  };
+  const count = pending.length;
 
   return (
-    <div className="border-t border-canvas-200 bg-white px-4 py-3">
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-xs text-canvas-800/60">
-          {hasChanges
-            ? `${pending.length} ${pending.length === 1 ? "section" : "sections"} changed`
-            : "No unpublished changes"}
-        </span>
-        <button
-          type="button"
-          onClick={publish}
-          disabled={!hasChanges || state === "publishing"}
-          className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white shadow-panel transition hover:bg-brand-700 disabled:opacity-40"
-        >
-          {state === "publishing" ? "Publishing…" : "Publish to my site"}
-        </button>
-      </div>
-
+    <div className="shrink-0 border-t border-canvas-200/70 bg-canvas-0/80 px-4 py-3 backdrop-blur">
       {notice && (
-        <p className={`mt-2 text-xs ${toneClass[notice.tone]}`}>{notice.text}</p>
+        <p
+          className={`mb-2.5 animate-fade-up rounded-lg px-3 py-2 text-[11px] leading-relaxed ${TONE[notice.tone]}`}
+        >
+          {notice.text}
+        </p>
       )}
+
+      <div className="flex items-center justify-between gap-3">
+        <span className="flex items-center gap-1.5 text-[11px] text-canvas-500">
+          {count > 0 && (
+            <span className="h-1.5 w-1.5 rounded-full bg-brand-500" />
+          )}
+          {count > 0
+            ? `${count} unpublished ${count === 1 ? "change" : "changes"}`
+            : "Everything published"}
+        </span>
+
+        <Button
+          variant="primary"
+          onClick={publish}
+          disabled={count === 0}
+          loading={publishing}
+        >
+          {publishing ? "Publishing" : "Publish"}
+        </Button>
+      </div>
     </div>
   );
 }

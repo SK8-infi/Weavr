@@ -92,9 +92,16 @@
     const sources = (declaring.getAttribute("data-weavr-source") || "")
       .split(/\s+/)
       .filter(Boolean);
-    const narrowed = entries.filter((e) => sources.includes(e.source));
 
-    return narrowed.length > 0 ? narrowed : entries;
+    // A declaration may name a whole file ("navigationData") or one export
+    // within it ("navigationData.footerQuickLinks"). Prefer the precise form
+    // when it matches, since it's the only thing that separates two lists
+    // living in the same file.
+    const exact = entries.filter((e) => sources.includes(e.qualified_source));
+    if (exact.length > 0) return exact;
+
+    const byFile = entries.filter((e) => sources.includes(e.source));
+    return byFile.length > 0 ? byFile : entries;
   }
 
   /**
@@ -168,6 +175,44 @@
     return found;
   }
 
+  /**
+   * Gives a bare text node its own element so it can be made editable.
+   *
+   * Components often mix a data value straight into markup beside other
+   * elements — `<span><span>Latest</span> Updates</span>`. "Updates" is a data
+   * value, but no element wraps only it, so there is nothing to make editable.
+   * A plain inline span changes nothing visually (it inherits everything and
+   * adds no box) and gives the value an element of its own.
+   */
+  /**
+   * Whether an element is actually laid out.
+   *
+   * Responsive markup keeps a second copy of the navigation in the DOM for
+   * small screens. Counting those hidden copies makes the number of times a
+   * string appears disagree with the number of fields holding it, which blocks
+   * position-based matching for every repeated label on the page.
+   *
+   * Uses client rects rather than `offsetParent`, which is also null inside
+   * any `position: fixed` subtree — that would wrongly discard a fixed header
+   * and take the whole navigation with it. A `display: none` element has no
+   * rects, while one that is merely transparent or behind a hover still does,
+   * which is the distinction wanted here.
+   */
+  function isRendered(element) {
+    return element === document.body || element.getClientRects().length > 0;
+  }
+
+  function wrapTextNode(textNode) {
+    const existing = textNode.parentElement;
+    if (existing?.dataset?.weavrWrapped === "1") return existing;
+
+    const span = document.createElement("span");
+    span.dataset.weavrWrapped = "1";
+    textNode.replaceWith(span);
+    span.appendChild(textNode);
+    return span;
+  }
+
   function elementsToMark() {
     const candidates = new Map();
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
@@ -180,13 +225,29 @@
     const occurrences = new Map();
     const seen = new Set();
 
-    while (walker.nextNode()) {
-      const textNode = walker.currentNode;
-      const parent = textNode.parentElement;
+    // Collect first: wrapping mutates the tree, which would disturb a live
+    // TreeWalker mid-iteration.
+    const textNodes = [];
+    while (walker.nextNode()) textNodes.push(walker.currentNode);
+
+    for (const textNode of textNodes) {
+      let parent = textNode.parentElement;
       if (!parent) continue;
-      if (!normalize(textNode.textContent || "")) continue;
+      const ownText = normalize(textNode.textContent || "");
+      if (!ownText) continue;
       if (parent.closest("script, style, svg, textarea, input, [data-weavr-ignore]")) {
         continue;
+      }
+      if (!isRendered(parent)) continue;
+
+      // A value sitting directly among sibling elements has no element of its
+      // own to edit, so give it one.
+      if (
+        valueIndex.has(ownText) &&
+        normalize(parent.textContent || "") !== ownText &&
+        parent.dataset.weavrWrapped !== "1"
+      ) {
+        parent = wrapTextNode(textNode);
       }
 
       // Climb while an ancestor's whole text could still be a data value.
@@ -450,6 +511,9 @@
         document.addEventListener("keydown", trackBypassKey, true);
         document.addEventListener("keyup", trackBypassKey, true);
         window.addEventListener("blur", clearBypassKey);
+        // Resizing can swap which copy of a responsive layout is displayed,
+        // changing what counts as on-screen.
+        window.addEventListener("resize", queueRefresh);
         observer.observe(document.body, { childList: true, subtree: true });
         queueRefresh();
       } else {
@@ -458,6 +522,7 @@
         document.removeEventListener("keydown", trackBypassKey, true);
         document.removeEventListener("keyup", trackBypassKey, true);
         window.removeEventListener("blur", clearBypassKey);
+        window.removeEventListener("resize", queueRefresh);
         clearBypassKey();
         observer.disconnect();
         document.querySelectorAll(`[${EDITABLE_ATTR}]`).forEach((element) => {

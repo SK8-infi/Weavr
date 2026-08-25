@@ -38,6 +38,11 @@ pub struct Candidate {
     /// Data file stem ("conferenceData"), matched against a section's
     /// declared `data-weavr-source` to break ties.
     pub source: String,
+    /// Same, one level finer ("navigationData.footerQuickLinks"). Two parts of
+    /// a page often render different exports of the same file — a footer's
+    /// link list and the main menu both live in navigationData — and the file
+    /// alone can't tell them apart.
+    pub qualified_source: String,
 }
 
 /// A rendered string together with every field it could have come from.
@@ -111,9 +116,11 @@ impl ContentIndex {
                     .iter()
                     .map(|p| {
                         let leaf = &self.leaves[*p];
+                        let source = source_of(&leaf.file);
                         Candidate {
+                            qualified_source: format!("{source}.{}", leaf.export_name),
                             field_id: leaf.id(),
-                            source: source_of(&leaf.file),
+                            source,
                         }
                     })
                     .collect(),

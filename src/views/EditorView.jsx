@@ -1,37 +1,40 @@
 import ContentPanel from "./ContentPanel";
 import PublishBar from "./PublishBar";
+import Button from "../components/ui/Button";
 import { invoke } from "../lib/tauri";
 
 /**
- * The editing panel. The live preview is docked beside this in the same
- * window, but it's a separate webview rendered by the OS — nothing here draws
- * it, which is why there's no preview element in this tree.
+ * The editing panel.
+ *
+ * The live site is docked beside this in the same window, but it's a separate
+ * webview drawn by the OS — nothing here renders it, which is why there's no
+ * preview element in this tree.
  */
 export default function EditorView({ project, onBack }) {
   const { repo, info } = project;
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden">
-      <header className="flex items-center gap-2 border-b border-canvas-200 bg-white px-4 py-3">
-        <button
-          type="button"
+    <div className="flex h-full flex-col overflow-hidden bg-canvas-50">
+      <header className="flex shrink-0 items-center gap-1.5 border-b border-canvas-200/70 bg-canvas-0/80 px-2.5 py-2 backdrop-blur">
+        <Button
+          variant="ghost"
+          size="sm"
+          title="Close this website"
           onClick={() => {
             invoke("preview_stop", { projectPath: info.local_path }).catch(() => {});
             onBack();
           }}
-          className="shrink-0 text-sm text-canvas-800/50 hover:text-canvas-900"
-          title="Close this site"
         >
           ←
-        </button>
-        <span className="truncate font-medium text-canvas-900">{repo.name}</span>
+        </Button>
+        <span className="truncate text-[13px] font-semibold tracking-[-0.01em] text-canvas-900">
+          {repo.name}
+        </span>
       </header>
 
-      <p className="border-b border-canvas-200 bg-brand-50 px-4 py-2 text-xs text-canvas-800/70">
-        Click any text in the preview to edit it, or use the list below.
-        <br />
-        Hold <kbd className="rounded border border-canvas-200 bg-white px-1">Ctrl</kbd> and click
-        to use the site normally — follow a link or open a menu.
+      <p className="shrink-0 border-b border-canvas-200/70 bg-brand-50/60 px-4 py-2 text-[11px] leading-relaxed text-canvas-600">
+        Click any text on your site to edit it. Hold{" "}
+        <Kbd>Ctrl</Kbd> and click to follow a link or open a menu.
       </p>
 
       <div className="min-h-0 flex-1">
@@ -40,5 +43,13 @@ export default function EditorView({ project, onBack }) {
 
       <PublishBar />
     </div>
+  );
+}
+
+function Kbd({ children }) {
+  return (
+    <kbd className="rounded border border-canvas-300 bg-canvas-0 px-1 py-px font-sans text-[10px] font-medium text-canvas-600 shadow-[0_1px_0_var(--color-canvas-300)]">
+      {children}
+    </kbd>
   );
 }

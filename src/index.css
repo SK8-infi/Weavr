@@ -1,21 +1,71 @@
 @import "tailwindcss";
 
+/*
+ * Weavr's own interface.
+ *
+ * The panel sits directly against the user's website, which has its own strong
+ * identity, so this chrome stays deliberately quiet: near-neutral greys, one
+ * accent reserved for the primary action, hairline borders instead of heavy
+ * boxes. Depth comes from very soft shadows rather than outlines, so the eye
+ * goes to the site rather than to the tool.
+ */
 @theme {
-  --color-canvas-50: #f8fafc;
-  --color-canvas-100: #f1f5f9;
-  --color-canvas-200: #e2e8f0;
-  --color-canvas-800: #1e293b;
-  --color-canvas-900: #0f172a;
-  --color-canvas-950: #020617;
+  /* Warm-tinted greys — pure grey reads cold beside the site's ivory. */
+  --color-canvas-0: #ffffff;
+  --color-canvas-50: #fbfbfa;
+  --color-canvas-100: #f5f5f4;
+  --color-canvas-200: #ebeae8;
+  --color-canvas-300: #dcdad7;
+  --color-canvas-400: #a8a5a0;
+  --color-canvas-500: #78756f;
+  --color-canvas-600: #57534e;
+  --color-canvas-700: #44403c;
+  --color-canvas-800: #292524;
+  --color-canvas-900: #1c1917;
+  --color-canvas-950: #0f0e0d;
 
   --color-brand-50: #eef2ff;
   --color-brand-100: #e0e7ff;
+  --color-brand-200: #c7d2fe;
+  --color-brand-400: #818cf8;
   --color-brand-500: #6366f1;
   --color-brand-600: #4f46e5;
   --color-brand-700: #4338ca;
 
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --shadow-panel: 0 1px 2px rgba(15, 23, 42, 0.06), 0 1px 3px rgba(15, 23, 42, 0.1);
+  --color-positive-50: #f0fdf4;
+  --color-positive-600: #16a34a;
+  --color-positive-700: #15803d;
+
+  --color-caution-50: #fffbeb;
+  --color-caution-600: #d97706;
+  --color-caution-700: #b45309;
+
+  --color-critical-50: #fef2f2;
+  --color-critical-600: #dc2626;
+  --color-critical-700: #b91c1c;
+
+  --font-sans:
+    ui-sans-serif, -apple-system, "Segoe UI Variable Display", "Segoe UI",
+    system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "Consolas", monospace;
+
+  /* Layered rather than blurred — a hairline plus a short, soft drop. */
+  --shadow-hairline: 0 0 0 1px rgba(28, 25, 23, 0.06);
+  --shadow-panel:
+    0 0 0 1px rgba(28, 25, 23, 0.05), 0 1px 2px rgba(28, 25, 23, 0.04);
+  --shadow-raised:
+    0 0 0 1px rgba(28, 25, 23, 0.06), 0 2px 4px rgba(28, 25, 23, 0.04),
+    0 8px 16px -4px rgba(28, 25, 23, 0.08);
+  --shadow-overlay:
+    0 0 0 1px rgba(28, 25, 23, 0.08), 0 12px 32px -8px rgba(28, 25, 23, 0.18);
+
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+html,
+body,
+#root {
+  height: 100%;
 }
 
 body {
@@ -23,4 +73,111 @@ body {
   font-family: var(--font-sans);
   background-color: var(--color-canvas-50);
   color: var(--color-canvas-900);
+  /* Text is small and dense in a side panel; these keep it crisp. */
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+/* The panel is a tool, not a document — text selection should be deliberate. */
+body {
+  user-select: none;
+  cursor: default;
+}
+
+input,
+textarea,
+[contenteditable="true"] {
+  user-select: text;
+}
+
+/* Slim, self-effacing scrollbars. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-canvas-300) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: var(--color-canvas-300);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-canvas-400);
+}
+
+/* One visible focus treatment everywhere, only for keyboard users. */
+:focus-visible {
+  outline: 2px solid var(--color-brand-500);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+@layer utilities {
+  @keyframes weavr-fade-up {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  .animate-fade-up {
+    animation: weavr-fade-up 0.24s var(--ease-out-soft) both;
+  }
+
+  @keyframes weavr-pulse-soft {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.45;
+    }
+  }
+  .animate-pulse-soft {
+    animation: weavr-pulse-soft 1.8s ease-in-out infinite;
+  }
+
+  /* Placeholder blocks shown while a list is loading. */
+  @keyframes weavr-shimmer {
+    from {
+      background-position: 200% 0;
+    }
+    to {
+      background-position: -200% 0;
+    }
+  }
+  .animate-shimmer {
+    background-image: linear-gradient(
+      90deg,
+      var(--color-canvas-100) 0%,
+      var(--color-canvas-200) 50%,
+      var(--color-canvas-100) 100%
+    );
+    background-size: 200% 100%;
+    animation: weavr-shimmer 1.4s linear infinite;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
