@@ -13,13 +13,14 @@ mod state;
 
 use commands::auth_commands::{auth_check_session, auth_sign_out, auth_start};
 use commands::content_commands::{content_editable_values, content_load, content_update};
-use commands::preview_commands::{preview_start, preview_stop};
+use commands::preview_commands::{panel_set_expanded, preview_start, preview_stop};
 use commands::publish_commands::{publish_now, publish_pending};
 use commands::repo_commands::{repo_clone, repo_list};
 use commands::setup_commands::project_install;
 use commands::structure_commands::{
     structure_duplicate, structure_lists, structure_move, structure_remove,
 };
+use layout::PanelState;
 use nodejs::preview_server::{stop_all_blocking, PreviewRegistry};
 use state::AppState;
 use tauri::{Manager, RunEvent};
@@ -30,6 +31,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(AppState::new())
         .manage(PreviewRegistry::default())
+        .manage(PanelState::default())
         .setup(|app| {
             // The window and its two webviews are built here rather than in
             // tauri.conf.json, because docking a child webview beside another
@@ -47,6 +49,7 @@ pub fn run() {
             project_install,
             preview_start,
             preview_stop,
+            panel_set_expanded,
             content_load,
             content_editable_values,
             content_update,

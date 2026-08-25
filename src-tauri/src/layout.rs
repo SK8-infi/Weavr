@@ -15,9 +15,41 @@ pub const WINDOW_LABEL: &str = "weavr";
 pub const PANEL_LABEL: &str = "main";
 pub const PREVIEW_LABEL: &str = "preview";
 
-/// Width of the editing panel. The preview takes whatever is left, so the site
-/// is always previewed at a realistic width.
+/// Width of the editing panel when open.
 const PANEL_WIDTH: f64 = 420.0;
+
+/// Width when collapsed — a rail holding the mark and the tab icons.
+///
+/// The panel stays on screen rather than disappearing entirely: it has to be
+/// somewhere to click to bring it back, and the preview is a separate webview
+/// that can't host Weavr's own controls. Collapsed by default so the site gets
+/// the full window, which also keeps it above its own desktop breakpoint.
+const RAIL_WIDTH: f64 = 52.0;
+
+/// Whether the editing panel is currently open.
+#[derive(Default)]
+pub struct PanelState {
+    expanded: std::sync::atomic::AtomicBool,
+}
+
+impl PanelState {
+    pub fn is_expanded(&self) -> bool {
+        self.expanded.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub fn set_expanded(&self, value: bool) {
+        self.expanded
+            .store(value, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+fn panel_width(app: &AppHandle) -> f64 {
+    if app.state::<PanelState>().is_expanded() {
+        PANEL_WIDTH
+    } else {
+        RAIL_WIDTH
+    }
+}
 
 pub fn window(app: &AppHandle) -> AppResult<Window> {
     app.get_window(WINDOW_LABEL)
@@ -44,7 +76,7 @@ pub fn apply(app: &AppHandle) -> AppResult<()> {
     match (panel, preview) {
         // Editing: panel on the left, preview filling the rest.
         (Some(panel), Some(preview)) => {
-            let panel_width = PANEL_WIDTH.min(width);
+            let panel_width = panel_width(app).min(width);
             set_bounds(&panel, 0.0, 0.0, panel_width, height)?;
             set_bounds(
                 &preview,
@@ -90,7 +122,7 @@ pub fn show_preview(app: &AppHandle, url: &str, init_script: &str) -> AppResult<
 
     let window = window(app)?;
     let (width, height) = logical_size(&window)?;
-    let panel_width = PANEL_WIDTH.min(width);
+    let panel_width = panel_width(app).min(width);
 
     let builder = tauri::webview::WebviewBuilder::new(
         PREVIEW_LABEL,
@@ -121,6 +153,12 @@ pub fn show_preview(app: &AppHandle, url: &str, init_script: &str) -> AppResult<
 
     apply(app)?;
     Ok(true)
+}
+
+/// Opens or collapses the editing panel, resizing the preview to match.
+pub fn set_panel_expanded(app: &AppHandle, expanded: bool) -> AppResult<()> {
+    app.state::<PanelState>().set_expanded(expanded);
+    apply(app)
 }
 
 pub fn hide_preview(app: &AppHandle) -> AppResult<()> {

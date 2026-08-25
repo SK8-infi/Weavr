@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "../lib/tauri";
 import Button from "../components/ui/Button";
+import Icon from "../components/ui/Icon";
+import { cn } from "../utils/cn";
 
 const PHASE = {
   INSTALLING: "installing",
@@ -67,7 +69,7 @@ export default function ProjectSetup({ project, onBack, onReady }) {
   const activeIndex = STEPS.findIndex((s) => s.id === phase);
 
   return (
-    <div className="animate-fade-up rounded-2xl bg-canvas-0 p-6 shadow-raised">
+    <div className="animate-pop rounded-2xl bg-canvas-0 p-6 shadow-float">
       <Button
         variant="ghost"
         size="sm"
@@ -75,33 +77,46 @@ export default function ProjectSetup({ project, onBack, onReady }) {
           invoke("preview_stop", { projectPath: info.local_path }).catch(() => {});
           onBack();
         }}
-        className="-ml-2 mb-3"
+        className="-ml-2 mb-4"
       >
-        ← Back
+        <Icon name="back" className="h-3.5 w-3.5" />
+        Back
       </Button>
 
-      <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-canvas-900">
-        {repo.name}
-      </h2>
-      <p className="mt-1 text-[12px] text-canvas-400">
-        This takes a few minutes the first time only.
-      </p>
+      <div className="flex items-center gap-3">
+        <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-50 text-brand-600">
+          <Icon name="sparkle" className="h-5 w-5" />
+        </span>
+        <span>
+          <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-canvas-900">
+            {repo.name}
+          </h2>
+          <p className="text-[12px] text-canvas-400">
+            Setting things up — only takes a while the first time.
+          </p>
+        </span>
+      </div>
 
-      <ol className="mt-5 flex flex-col gap-2.5">
+      <ol className="mt-6 flex flex-col gap-3">
         {STEPS.map((step, index) => {
           const done = !failed && activeIndex > index;
           const active = !failed && activeIndex === index;
           return (
             <li key={step.id} className="flex items-center gap-2.5">
-              <StepDot done={done} active={active} failed={failed && activeIndex === index} />
+              <StepDot
+                done={done}
+                active={active}
+                failed={failed && activeIndex === index}
+              />
               <span
-                className={
-                  done
-                    ? "text-[13px] text-canvas-400"
-                    : active
-                      ? "text-[13px] font-medium text-canvas-900"
-                      : "text-[13px] text-canvas-400"
-                }
+                className={cn(
+                  "text-[13px] transition-colors",
+                  active
+                    ? "font-medium text-canvas-900"
+                    : done
+                      ? "text-canvas-400"
+                      : "text-canvas-400",
+                )}
               >
                 {step.label}
               </span>
@@ -111,21 +126,28 @@ export default function ProjectSetup({ project, onBack, onReady }) {
       </ol>
 
       {failed && (
-        <p className="mt-5 rounded-xl bg-critical-50 px-4 py-3 text-[12px] leading-relaxed text-critical-700">
-          {errorMessage}
-        </p>
+        <div className="mt-5 flex items-start gap-2 rounded-xl bg-critical-50 px-4 py-3">
+          <Icon name="alert" className="mt-px h-3.5 w-3.5 text-critical-600" />
+          <p className="text-[12px] leading-relaxed text-critical-700">
+            {errorMessage}
+          </p>
+        </div>
       )}
 
       <button
         type="button"
         onClick={() => setShowLog((v) => !v)}
-        className="mt-4 text-[11px] text-canvas-400 transition-colors hover:text-canvas-700"
+        className="mt-5 flex items-center gap-1 text-[11px] text-canvas-400 transition-colors hover:text-canvas-700"
       >
+        <Icon
+          name="chevronRight"
+          className={cn("h-3 w-3 transition-transform", showLog && "rotate-90")}
+        />
         {showLog ? "Hide details" : "Show details"}
       </button>
 
       {showLog && (
-        <pre className="mt-2 max-h-56 overflow-y-auto rounded-xl bg-canvas-950 p-3.5 font-mono text-[11px] leading-relaxed text-canvas-300">
+        <pre className="mt-2 max-h-56 animate-fade-up overflow-y-auto rounded-xl bg-canvas-950 p-3.5 font-mono text-[11px] leading-relaxed text-canvas-300">
           {log.length === 0 ? "Starting…" : log.join("\n")}
           <span ref={logEndRef} />
         </pre>
@@ -137,22 +159,29 @@ export default function ProjectSetup({ project, onBack, onReady }) {
 function StepDot({ done, active, failed }) {
   if (failed) {
     return (
-      <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-critical-600 text-[10px] font-bold text-white">
-        !
+      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-critical-600 text-white">
+        <Icon name="close" className="h-3 w-3" strokeWidth={2.5} />
       </span>
     );
   }
   if (done) {
     return (
-      <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-positive-600 text-[9px] font-bold text-white">
-        ✓
+      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-positive-600 text-white">
+        <Icon name="check" className="h-3 w-3" strokeWidth={2.5} />
       </span>
     );
   }
   if (active) {
     return (
-      <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-[1.5px] border-brand-500 border-t-transparent" />
+      <span className="relative flex h-5 w-5 shrink-0 items-center justify-center">
+        <span className="absolute inset-0 animate-pulse-soft rounded-full bg-brand-100" />
+        <span className="relative h-4 w-4 animate-spin rounded-full border-[1.5px] border-brand-500 border-t-transparent" />
+      </span>
     );
   }
-  return <span className="h-4 w-4 shrink-0 rounded-full bg-canvas-200" />;
+  return (
+    <span className="flex h-5 w-5 shrink-0 items-center justify-center">
+      <span className="h-2 w-2 rounded-full bg-canvas-200" />
+    </span>
+  );
 }

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "../lib/tauri";
-import { fieldClasses, FieldLabel } from "../components/ui/Field";
+import { fieldClasses, FieldLabel, SearchInput } from "../components/ui/Field";
+import Icon from "../components/ui/Icon";
 import { cn } from "../utils/cn";
 
 /** "src/data/committeeData.js" -> "Committee" */
@@ -93,12 +94,10 @@ export default function ContentPanel({ projectPath }) {
   return (
     <div className="flex h-full flex-col">
       <div className="shrink-0 px-3 pt-3">
-        <input
-          type="search"
+        <SearchInput
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search all text on your site"
-          className="w-full rounded-lg bg-canvas-0 px-3 py-2 text-[13px] shadow-panel outline-none transition placeholder:text-canvas-400 focus:shadow-[0_0_0_1px_var(--color-brand-500),0_0_0_4px_var(--color-brand-100)]"
         />
         {error && (
           <p className="mt-2 rounded-lg bg-critical-50 px-3 py-2 text-[11px] leading-relaxed text-critical-700">
@@ -173,9 +172,10 @@ function FieldChooser({ choice, groups, onDismiss, onSaved, onError }) {
           <button
             type="button"
             onClick={onDismiss}
-            className="shrink-0 text-[11px] text-canvas-400 hover:text-canvas-700"
+            title="Dismiss"
+            className="shrink-0 text-canvas-400 transition-colors hover:text-canvas-700"
           >
-            ✕
+            <Icon name="close" className="h-3.5 w-3.5" />
           </button>
         </div>
         <FieldEditor field={picked} onSaved={onSaved} onError={onError} />
@@ -193,9 +193,10 @@ function FieldChooser({ choice, groups, onDismiss, onSaved, onError }) {
         <button
           type="button"
           onClick={onDismiss}
-          className="shrink-0 text-[11px] text-caution-700/60 hover:text-caution-700"
+          title="Dismiss"
+          className="shrink-0 text-caution-700/60 transition-colors hover:text-caution-700"
         >
-          ✕
+          <Icon name="close" className="h-3.5 w-3.5" />
         </button>
       </div>
 
@@ -224,8 +225,8 @@ function FileGroup({ group, isOpen, onToggle, onSaved, onError }) {
   return (
     <section
       className={cn(
-        "overflow-hidden rounded-xl transition-colors",
-        isOpen ? "bg-canvas-0 shadow-panel" : "hover:bg-canvas-100",
+        "overflow-hidden rounded-2xl transition-all duration-200",
+        isOpen ? "bg-canvas-0 shadow-raised" : "hover:bg-canvas-0/70 hover:shadow-panel",
       )}
     >
       <button
@@ -233,14 +234,13 @@ function FileGroup({ group, isOpen, onToggle, onSaved, onError }) {
         onClick={onToggle}
         className="flex w-full items-center gap-2 px-3 py-2.5 text-left"
       >
-        <span
+        <Icon
+          name="chevronRight"
           className={cn(
-            "text-[10px] text-canvas-400 transition-transform duration-200",
+            "h-3.5 w-3.5 text-canvas-400 transition-transform duration-200",
             isOpen && "rotate-90",
           )}
-        >
-          ▶
-        </span>
+        />
         <span className="flex-1 truncate text-[13px] font-medium text-canvas-800">
           {friendlyFileName(group.file)}
         </span>

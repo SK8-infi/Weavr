@@ -2,12 +2,13 @@ import { useCallback, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "../lib/tauri";
 import Button from "../components/ui/Button";
+import Icon from "../components/ui/Icon";
 
 const TONE = {
-  good: "bg-positive-50 text-positive-700",
-  warn: "bg-caution-50 text-caution-700",
-  bad: "bg-critical-50 text-critical-700",
-  muted: "bg-canvas-100 text-canvas-500",
+  good: { cls: "bg-positive-50 text-positive-700", icon: "check" },
+  warn: { cls: "bg-caution-50 text-caution-700", icon: "alert" },
+  bad: { cls: "bg-critical-50 text-critical-700", icon: "alert" },
+  muted: { cls: "bg-canvas-100 text-canvas-500", icon: "check" },
 };
 
 export default function PublishBar() {
@@ -28,9 +29,7 @@ export default function PublishBar() {
       // A fresh edit makes an older outcome message misleading.
       setNotice(null);
     });
-    return () => {
-      sub.then((unlisten) => unlisten());
-    };
+    return () => sub.then((unlisten) => unlisten());
   }, [refresh]);
 
   async function publish() {
@@ -57,25 +56,32 @@ export default function PublishBar() {
   }
 
   const count = pending.length;
+  const tone = notice ? TONE[notice.tone] : null;
 
   return (
-    <div className="shrink-0 border-t border-canvas-200/70 bg-canvas-0/80 px-4 py-3 backdrop-blur">
+    <div className="bg-canvas-0/75 backdrop-blur-xl backdrop-saturate-150 shrink-0 px-3 py-3 shadow-[0_-1px_2px_rgba(13,15,19,0.04)]">
       {notice && (
-        <p
-          className={`mb-2.5 animate-fade-up rounded-lg px-3 py-2 text-[11px] leading-relaxed ${TONE[notice.tone]}`}
+        <div
+          className={`mb-2.5 flex animate-pop items-start gap-1.5 rounded-lg px-2.5 py-2 text-[11px] leading-relaxed ${tone.cls}`}
         >
-          {notice.text}
-        </p>
+          <Icon name={tone.icon} className="mt-px h-3 w-3 shrink-0" />
+          <span>{notice.text}</span>
+        </div>
       )}
 
       <div className="flex items-center justify-between gap-3">
         <span className="flex items-center gap-1.5 text-[11px] text-canvas-500">
-          {count > 0 && (
-            <span className="h-1.5 w-1.5 rounded-full bg-brand-500" />
+          {count > 0 ? (
+            <>
+              <span className="h-1.5 w-1.5 rounded-full bg-brand-500" />
+              {count} unpublished {count === 1 ? "change" : "changes"}
+            </>
+          ) : (
+            <>
+              <Icon name="check" className="h-3 w-3 text-positive-600" />
+              All published
+            </>
           )}
-          {count > 0
-            ? `${count} unpublished ${count === 1 ? "change" : "changes"}`
-            : "Everything published"}
         </span>
 
         <Button
@@ -84,6 +90,7 @@ export default function PublishBar() {
           disabled={count === 0}
           loading={publishing}
         >
+          {!publishing && <Icon name="upload" className="h-3.5 w-3.5" />}
           {publishing ? "Publishing" : "Publish"}
         </Button>
       </div>

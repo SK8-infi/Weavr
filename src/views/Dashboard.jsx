@@ -3,7 +3,9 @@ import { invoke } from "../lib/tauri";
 import ProjectSetup from "./ProjectSetup";
 import EditorView from "./EditorView";
 import Button from "../components/ui/Button";
+import Icon from "../components/ui/Icon";
 import WeavrMark from "../components/ui/WeavrMark";
+import { SearchInput } from "../components/ui/Field";
 import { cn } from "../utils/cn";
 
 export default function Dashboard({ user, onSignedOut }) {
@@ -53,10 +55,10 @@ export default function Dashboard({ user, onSignedOut }) {
   }
 
   return (
-    <div className="flex h-full flex-col bg-canvas-50">
+    <div className="flex h-full flex-col">
       <TitleBar user={user} onSignedOut={onSignedOut} />
 
-      <main className="mx-auto w-full max-w-lg flex-1 overflow-y-auto px-8 py-10">
+      <main className="mx-auto w-full max-w-xl flex-1 overflow-y-auto px-8 py-10">
         {project ? (
           project.info.is_valid ? (
             <ProjectSetup
@@ -69,40 +71,47 @@ export default function Dashboard({ user, onSignedOut }) {
           )
         ) : (
           <div className="animate-fade-up">
-            <h1 className="text-[19px] font-semibold tracking-[-0.01em] text-canvas-900">
-              Choose a website
+            <h1 className="text-[22px] font-semibold tracking-[-0.02em] text-canvas-900">
+              Your websites
             </h1>
             <p className="mt-1 text-[13px] text-canvas-500">
               Pick the repository holding your conference site.
             </p>
 
             {repos && repos.length > 6 && (
-              <input
-                type="search"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search repositories"
-                className="mt-5 w-full rounded-lg bg-canvas-0 px-3 py-2 text-[13px] shadow-panel outline-none transition placeholder:text-canvas-400 focus:shadow-[0_0_0_1px_var(--color-brand-500),0_0_0_4px_var(--color-brand-100)]"
-              />
+              <div className="mt-5">
+                <SearchInput
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search repositories"
+                />
+              </div>
             )}
 
             {loadError && (
-              <p className="mt-5 rounded-xl bg-critical-50 px-4 py-3 text-[12px] leading-relaxed text-critical-700">
-                {loadError}
-              </p>
+              <div className="mt-5 flex items-start gap-2 rounded-xl bg-critical-50 px-4 py-3">
+                <Icon name="alert" className="mt-px h-3.5 w-3.5 text-critical-600" />
+                <p className="text-[12px] leading-relaxed text-critical-700">
+                  {loadError}
+                </p>
+              </div>
             )}
 
             {!repos && !loadError && <RepoSkeleton />}
 
             {filtered?.length === 0 && (
-              <p className="mt-6 text-[13px] text-canvas-400">
+              <p className="mt-8 text-center text-[13px] text-canvas-400">
                 {search ? "No repositories match that." : "No repositories found."}
               </p>
             )}
 
-            <ul className="mt-5 flex flex-col gap-1.5">
-              {filtered?.map((repo) => (
-                <li key={repo.id}>
+            <ul className="mt-5 flex flex-col gap-2">
+              {filtered?.map((repo, index) => (
+                <li
+                  key={repo.id}
+                  className="animate-fade-up"
+                  style={{ animationDelay: `${Math.min(index, 8) * 30}ms` }}
+                >
                   <RepoRow
                     repo={repo}
                     busy={cloningId === repo.id}
@@ -126,15 +135,15 @@ function TitleBar({ user, onSignedOut }) {
   }
 
   return (
-    <header className="flex shrink-0 items-center justify-between border-b border-canvas-200/70 bg-canvas-0/80 px-4 py-2.5 backdrop-blur">
+    <header className="bg-canvas-0/75 backdrop-blur-xl backdrop-saturate-150 sticky top-0 z-10 flex shrink-0 items-center justify-between px-4 py-2.5 shadow-panel">
       <span className="flex items-center gap-2">
-        <WeavrMark className="h-5 w-5" />
+        <WeavrMark className="h-[22px] w-[22px]" />
         <span className="text-[13px] font-semibold tracking-[-0.01em] text-canvas-900">
           Weavr
         </span>
       </span>
 
-      <span className="flex items-center gap-2.5">
+      <span className="flex items-center gap-2">
         <img
           src={user.avatar_url}
           alt=""
@@ -158,53 +167,65 @@ function RepoRow({ repo, busy, disabled, onSelect }) {
       onClick={onSelect}
       disabled={disabled}
       className={cn(
-        "group flex w-full items-center gap-3 rounded-xl bg-canvas-0 px-3.5 py-3 text-left",
-        "shadow-panel transition-all duration-150 ease-out",
-        "hover:shadow-raised active:scale-[0.995]",
+        "group flex w-full items-center gap-3 rounded-2xl bg-canvas-0 px-3.5 py-3 text-left",
+        "shadow-panel transition-all duration-200 ease-[var(--ease-out-soft)]",
+        "hover:-translate-y-px hover:shadow-float",
+        "active:translate-y-0 active:scale-[0.995]",
         disabled && !busy && "pointer-events-none opacity-40",
       )}
     >
+      <span
+        className={cn(
+          "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-colors duration-200",
+          "bg-canvas-100 text-canvas-500",
+          "group-hover:bg-brand-50 group-hover:text-brand-600",
+        )}
+      >
+        <Icon name={repo.private ? "lock" : "folder"} className="h-4 w-4" />
+      </span>
+
       <span className="min-w-0 flex-1">
-        <span className="flex items-center gap-1.5">
-          <span className="truncate text-[13px] font-medium text-canvas-900">
-            {repo.name}
-          </span>
-          {repo.private && (
-            <span className="shrink-0 rounded bg-canvas-100 px-1.5 py-px text-[10px] text-canvas-500">
-              Private
-            </span>
-          )}
+        <span className="block truncate text-[13px] font-medium text-canvas-900">
+          {repo.name}
         </span>
         <span className="mt-0.5 block truncate text-[11px] text-canvas-400">
           {repo.owner.login}
+          {repo.private && " · Private"}
         </span>
       </span>
 
-      <span className="shrink-0 text-[11px] text-canvas-400">
-        {busy ? (
-          <span className="flex items-center gap-1.5 text-brand-600">
-            <span className="h-3 w-3 animate-spin rounded-full border-[1.5px] border-current border-t-transparent" />
-            Opening
-          </span>
-        ) : (
-          <span className="opacity-0 transition-opacity group-hover:opacity-100">
-            Open →
-          </span>
-        )}
-      </span>
+      {busy ? (
+        <span className="flex shrink-0 items-center gap-1.5 text-[11px] font-medium text-brand-600">
+          <span className="h-3 w-3 animate-spin rounded-full border-[1.5px] border-current border-t-transparent" />
+          Opening
+        </span>
+      ) : (
+        <Icon
+          name="chevronRight"
+          className="shrink-0 text-canvas-300 transition-all duration-200 group-hover:translate-x-0.5 group-hover:text-brand-500"
+        />
+      )}
     </button>
   );
 }
 
 function RepoSkeleton() {
   return (
-    <ul className="mt-5 flex flex-col gap-1.5" aria-hidden="true">
+    <ul className="mt-5 flex flex-col gap-2" aria-hidden="true">
       {[0, 1, 2, 3].map((i) => (
         <li
           key={i}
-          className="h-[58px] animate-shimmer rounded-xl"
-          style={{ animationDelay: `${i * 90}ms` }}
-        />
+          className="flex items-center gap-3 rounded-2xl bg-canvas-0 px-3.5 py-3 shadow-panel"
+        >
+          <span className="h-9 w-9 shrink-0 animate-shimmer rounded-xl" />
+          <span className="flex-1">
+            <span
+              className="block h-3 animate-shimmer rounded"
+              style={{ width: `${52 - i * 6}%` }}
+            />
+            <span className="mt-2 block h-2.5 w-1/4 animate-shimmer rounded" />
+          </span>
+        </li>
       ))}
     </ul>
   );
@@ -213,9 +234,10 @@ function RepoSkeleton() {
 function InvalidProject({ project, onBack }) {
   const { repo, info } = project;
   return (
-    <div className="animate-fade-up rounded-2xl bg-canvas-0 p-6 shadow-raised">
+    <div className="animate-pop rounded-2xl bg-canvas-0 p-6 shadow-float">
       <Button variant="ghost" size="sm" onClick={onBack} className="-ml-2 mb-3">
-        ← Back
+        <Icon name="back" className="h-3.5 w-3.5" />
+        Back
       </Button>
 
       <h2 className="text-[15px] font-semibold text-canvas-900">
@@ -226,12 +248,13 @@ function InvalidProject({ project, onBack }) {
         edited safely. These are missing:
       </p>
 
-      <ul className="mt-3 flex flex-col gap-1">
+      <ul className="mt-3 flex flex-col gap-1.5">
         {info.missing.map((item) => (
           <li
             key={item}
-            className="rounded-lg bg-caution-50 px-3 py-2 font-mono text-[11px] text-caution-700"
+            className="flex items-center gap-2 rounded-lg bg-caution-50 px-3 py-2 font-mono text-[11px] text-caution-700"
           >
+            <Icon name="alert" className="h-3 w-3 shrink-0" />
             {item}
           </li>
         ))}

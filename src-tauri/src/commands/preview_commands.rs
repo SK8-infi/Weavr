@@ -88,6 +88,12 @@ pub fn push_editable_values(app: &AppHandle) -> AppResult<()> {
         .map_err(|e| AppError::Other(format!("could not install edit bridge: {e}")))
 }
 
+/// Opens or collapses the editing panel beside the site.
+#[tauri::command]
+pub async fn panel_set_expanded(app: AppHandle, expanded: bool) -> AppResult<()> {
+    layout::set_panel_expanded(&app, expanded)
+}
+
 #[tauri::command]
 pub async fn preview_stop(app: AppHandle, project_path: String) -> AppResult<()> {
     layout::hide_preview(&app)?;

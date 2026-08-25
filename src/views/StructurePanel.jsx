@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "../lib/tauri";
 import Button from "../components/ui/Button";
+import Icon from "../components/ui/Icon";
+import { SearchInput } from "../components/ui/Field";
 import { cn } from "../utils/cn";
 
 /** "src/data/committeeData.js" + "documents" -> "Committee › Documents" */
@@ -71,12 +73,10 @@ export default function StructurePanel() {
   return (
     <div className="flex h-full flex-col">
       <div className="shrink-0 px-3 pt-3">
-        <input
-          type="search"
+        <SearchInput
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search lists"
-          className="w-full rounded-lg bg-canvas-0 px-3 py-2 text-[13px] shadow-panel outline-none transition placeholder:text-canvas-400 focus:shadow-[0_0_0_1px_var(--color-brand-500),0_0_0_4px_var(--color-brand-100)]"
         />
         <p className="mt-2 text-[11px] leading-relaxed text-canvas-500">
           Add, remove or reorder entries. A new entry starts as a copy of the
@@ -117,8 +117,8 @@ function ListGroup({ list, isOpen, busy, onToggle, onRun }) {
   return (
     <section
       className={cn(
-        "overflow-hidden rounded-xl transition-colors",
-        isOpen ? "bg-canvas-0 shadow-panel" : "hover:bg-canvas-100",
+        "overflow-hidden rounded-2xl transition-all duration-200",
+        isOpen ? "bg-canvas-0 shadow-raised" : "hover:bg-canvas-0/70 hover:shadow-panel",
       )}
     >
       <button
@@ -126,14 +126,13 @@ function ListGroup({ list, isOpen, busy, onToggle, onRun }) {
         onClick={onToggle}
         className="flex w-full items-center gap-2 px-3 py-2.5 text-left"
       >
-        <span
+        <Icon
+          name="chevronRight"
           className={cn(
-            "text-[10px] text-canvas-400 transition-transform duration-200",
+            "h-3.5 w-3.5 text-canvas-400 transition-transform duration-200",
             isOpen && "rotate-90",
           )}
-        >
-          ▶
-        </span>
+        />
         <span className="flex-1 truncate text-[13px] font-medium text-canvas-800">
           {listTitle(list)}
         </span>
@@ -147,14 +146,14 @@ function ListGroup({ list, isOpen, busy, onToggle, onRun }) {
           {list.items.map((label, index) => (
             <li
               key={index}
-              className="flex items-center gap-1 rounded-lg bg-canvas-50 py-1 pl-2.5 pr-1"
+              className="flex items-center gap-1 rounded-xl bg-canvas-50 py-1 pl-2.5 pr-1 transition-colors hover:bg-canvas-100"
             >
               <span className="min-w-0 flex-1 truncate text-[11px] text-canvas-700">
                 {label || <em className="text-canvas-400">Entry {index + 1}</em>}
               </span>
 
               <RowButton
-                label="↑"
+                icon="arrowUp"
                 title="Move up"
                 disabled={busy || index === 0}
                 onClick={() =>
@@ -162,7 +161,7 @@ function ListGroup({ list, isOpen, busy, onToggle, onRun }) {
                 }
               />
               <RowButton
-                label="↓"
+                icon="arrowDown"
                 title="Move down"
                 disabled={busy || index === list.items.length - 1}
                 onClick={() =>
@@ -170,13 +169,13 @@ function ListGroup({ list, isOpen, busy, onToggle, onRun }) {
                 }
               />
               <RowButton
-                label="＋"
+                icon="plus"
                 title="Add a copy below"
                 disabled={busy}
                 onClick={() => onRun("structure_duplicate", { listId: list.id, index })}
               />
               <RowButton
-                label="✕"
+                icon="close"
                 title="Remove"
                 danger
                 disabled={busy || list.items.length <= 1}
@@ -190,18 +189,18 @@ function ListGroup({ list, isOpen, busy, onToggle, onRun }) {
   );
 }
 
-function RowButton({ label, title, onClick, disabled, danger }) {
+function RowButton({ icon, title, onClick, disabled, danger }) {
   return (
     <Button
       variant="ghost"
-      size="sm"
+      size="icon"
       title={title}
       aria-label={title}
       disabled={disabled}
       onClick={onClick}
-      className={cn("h-6 w-6 px-0 text-[11px]", danger && "hover:text-critical-600")}
+      className={cn("h-6 w-6", danger && "hover:bg-critical-50 hover:text-critical-600")}
     >
-      {label}
+      <Icon name={icon} className="h-3.5 w-3.5" />
     </Button>
   );
 }
