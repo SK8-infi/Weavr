@@ -48,7 +48,12 @@ pub struct Candidate {
 /// A rendered string together with every field it could have come from.
 #[derive(Debug, Clone, Serialize)]
 pub struct ValueCandidates {
+    /// As rendered, with emphasis markers removed — what page text is matched
+    /// against.
     pub value: String,
+    /// As stored, markers intact, so the editor can show existing emphasis and
+    /// write it back rather than flattening it on the first edit.
+    pub raw: String,
     pub fields: Vec<Candidate>,
 }
 
@@ -112,6 +117,7 @@ impl ContentIndex {
             .iter()
             .map(|(value, positions)| ValueCandidates {
                 value: value.clone(),
+                raw: self.leaves[positions[0]].value.clone(),
                 fields: positions
                     .iter()
                     .map(|p| {
@@ -160,17 +166,29 @@ pub fn normalize(text: &str) -> String {
         .join(" ")
 }
 
-/// Removes `**bold**` / `*italic*` markers, keeping the words between them.
+/// Removes inline emphasis markers, keeping the words between them.
+///
+/// The page renders these away, so a stored value has to be compared in the
+/// same form or nothing carrying emphasis would ever match what's on screen.
 pub fn strip_emphasis(text: &str) -> String {
     let chars: Vec<char> = text.chars().collect();
     let mut out = String::with_capacity(text.len());
     let mut i = 0;
 
     while i < chars.len() {
+        // `*` and `**` for italic and bold, `__` for underline. A longer run
+        // is left alone: it isn't something we emit, so it's the author's own
+        // text and shouldn't be quietly eaten.
         if chars[i] == '*' {
             let run = chars[i..].iter().take_while(|c| **c == '*').count();
-            // Only treat a run as a marker if it's one we emit ourselves.
             if run <= 2 {
+                i += run;
+                continue;
+            }
+        }
+        if chars[i] == '_' {
+            let run = chars[i..].iter().take_while(|c| **c == '_').count();
+            if run == 2 {
                 i += run;
                 continue;
             }

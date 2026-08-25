@@ -19,11 +19,17 @@
 
   /** @type {Map<string, Array<{field_id: string, source: string}>>} */
   let valueIndex = new Map();
+  /** Stored form of each value, markers intact. */
+  let rawByValue = new Map();
   /** Bounds how far up the tree a match is worth looking for. */
   let maxValueLength = 0;
   let enabled = false;
 
   const normalize = (text) => text.replace(/\s+/g, " ").trim();
+
+  /** Drops emphasis markers, so stored text compares against rendered text. */
+  const stripMarks = (text) =>
+    text.replace(/\*\*|__|\*/g, "");
 
   function installStyles() {
     if (document.getElementById(STYLE_ID)) return;
@@ -144,6 +150,38 @@
         line-height: 1.5;
         color: #9d938a;
       }
+      /* Formatting bar, shown while a piece of text is being edited. */
+      .weavr-toolbar {
+        position: fixed;
+        z-index: 2147483646;
+        display: flex;
+        gap: 2px;
+        padding: 4px;
+        border-radius: 10px;
+        background: rgba(28, 25, 23, 0.94);
+        backdrop-filter: blur(18px) saturate(150%);
+        -webkit-backdrop-filter: blur(18px) saturate(150%);
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.08),
+          0 0 0 1px rgba(255, 255, 255, 0.1),
+          0 12px 28px -10px rgba(0, 0, 0, 0.85);
+      }
+      .weavr-tool {
+        width: 26px;
+        height: 26px;
+        border: 0;
+        border-radius: 7px;
+        background: transparent;
+        color: #ded8d1;
+        font: 600 12px/1 ui-serif, Georgia, serif;
+        cursor: pointer;
+        transition: background-color 0.12s ease, color 0.12s ease;
+      }
+      .weavr-tool:hover { background: rgba(255, 255, 255, 0.12); color: #faf7f2; }
+      .weavr-tool[aria-pressed="true"] { background: #e8a317; color: #23180a; }
+      .weavr-tool-b { font-weight: 800; }
+      .weavr-tool-i { font-style: italic; }
+      .weavr-tool-u { text-decoration: underline; }
       /* Marks the element the chooser is currently attached to. */
       [data-weavr-focus="1"] {
         outline: 2px solid #e8a317 !important;
@@ -464,11 +502,133 @@
       // "roll back" to the unsaved text and the preview would show content
       // that was never written to disk.
       if (element.dataset.weavrOriginal === undefined) {
-        element.dataset.weavrOriginal = normalize(element.textContent || "");
+        const shown = normalize(element.textContent || "");
+        element.dataset.weavrOriginal = shown;
+        const raw = rawByValue.get(shown);
+        if (raw) element.dataset.weavrMarks = raw;
       }
       element.addEventListener("keydown", onKeyDown);
       element.addEventListener("blur", onBlur);
+      element.addEventListener("focus", onFocus);
     }
+  }
+
+
+  // ---------------------------------------------------------------------
+  // Inline formatting
+  //
+  // Emphasis is stored in the text itself (`**bold**`, `*italic*`,
+  // `__underline__`) rather than as markup, because the destination is a
+  // plain string in a data file. The site's own renderer turns the markers
+  // back into styling, which is why nothing here writes HTML.
+  // ---------------------------------------------------------------------
+
+  const MARKS = [
+    { command: "bold", mark: "**", label: "B", cls: "weavr-tool-b", title: "Bold" },
+    { command: "italic", mark: "*", label: "I", cls: "weavr-tool-i", title: "Italic" },
+    { command: "underline", mark: "__", label: "U", cls: "weavr-tool-u", title: "Underline" },
+  ];
+
+  let toolbar = null;
+
+  function closeToolbar() {
+    toolbar?.remove();
+    toolbar = null;
+  }
+
+  function positionToolbar(element) {
+    const box = element.getBoundingClientRect();
+    const height = toolbar.offsetHeight || 34;
+    const top = box.top - height - 6;
+    toolbar.style.left = `${Math.max(8, box.left)}px`;
+    // Below the text when there's no room above it.
+    toolbar.style.top = `${top < 8 ? box.bottom + 6 : top}px`;
+  }
+
+  function refreshToolbarState() {
+    if (!toolbar) return;
+    for (const { command } of MARKS) {
+      const button = toolbar.querySelector(`[data-weavr-mark="${command}"]`);
+      if (button) {
+        button.setAttribute("aria-pressed", String(document.queryCommandState?.(command) === true));
+      }
+    }
+  }
+
+  function openToolbar(element) {
+    closeToolbar();
+    toolbar = document.createElement("div");
+    toolbar.className = "weavr-toolbar";
+    toolbar.setAttribute("data-weavr-ignore", "");
+    toolbar.innerHTML = MARKS.map(
+      (m) =>
+        `<button class="weavr-tool ${m.cls}" data-weavr-mark="${m.command}" title="${m.title}" aria-pressed="false">${m.label}</button>`,
+    ).join("");
+
+    // mousedown, not click: the default would blur the text being edited and
+    // throw away the selection before the command could apply.
+    toolbar.addEventListener("mousedown", (event) => {
+      const button = event.target.closest?.("[data-weavr-mark]");
+      if (!button) return;
+      event.preventDefault();
+      document.execCommand(button.getAttribute("data-weavr-mark"));
+      refreshToolbarState();
+    });
+
+    document.body.appendChild(toolbar);
+    positionToolbar(element);
+    refreshToolbarState();
+  }
+
+  /** Converts the browser's formatting markup back into stored markers. */
+  function htmlToMarks(root) {
+    let out = "";
+
+    const walk = (node, open) => {
+      for (const child of node.childNodes) {
+        if (child.nodeType === Node.TEXT_NODE) {
+          out += child.textContent;
+          continue;
+        }
+        if (child.nodeType !== Node.ELEMENT_NODE) continue;
+
+        const tag = child.nodeName.toLowerCase();
+        const style = child.getAttribute?.("style") || "";
+        let mark = "";
+        if (tag === "b" || tag === "strong" || /font-weight:\s*(bold|[6-9]00)/.test(style)) {
+          mark = "**";
+        } else if (tag === "i" || tag === "em" || /font-style:\s*italic/.test(style)) {
+          mark = "*";
+        } else if (tag === "u" || /text-decoration[^;]*underline/.test(style)) {
+          mark = "__";
+        }
+
+        // Nesting the same mark twice would produce `****`, which reads as an
+        // empty pair rather than emphasis.
+        if (mark && !open.includes(mark)) {
+          out += mark;
+          walk(child, [...open, mark]);
+          out += mark;
+        } else {
+          walk(child, open);
+        }
+      }
+    };
+
+    walk(root, []);
+    return out;
+  }
+
+  /** Turns stored markers back into markup for editing. */
+  function marksToHtml(text) {
+    const escaped = text
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+    return escaped
+      .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+      .replace(/__([^_]+)__/g, "<u>$1</u>")
+      .replace(/\*([^*]+)\*/g, "<i>$1</i>");
   }
 
   let popover = null;
@@ -593,6 +753,18 @@
     closePopover();
   }
 
+  function onFocus(event) {
+    const element = event.currentTarget;
+    // Re-hydrate the stored markers into markup so the words appear the way
+    // they will be published, and the toolbar can toggle them.
+    const marks = element.dataset.weavrMarks;
+    if (marks && marks !== element.textContent) {
+      element.innerHTML = marksToHtml(marks);
+    }
+    openToolbar(element);
+    document.addEventListener("selectionchange", refreshToolbarState);
+  }
+
   function onKeyDown(event) {
     // Typing again clears a previous failure so the warning reflects this
     // attempt, not an old one.
@@ -611,6 +783,8 @@
   }
 
   function onBlur(event) {
+    closeToolbar();
+    document.removeEventListener("selectionchange", refreshToolbarState);
     const element = event.currentTarget;
     const fieldId = element.getAttribute(EDITABLE_ATTR);
     const newValue = normalize(element.textContent || "");
@@ -642,8 +816,16 @@
       fieldValue = newValue.slice(prefix.length, newValue.length - suffix.length);
     }
 
+    // Send the marker form so bold/italic/underline survive the round trip.
+    // The plain text is what was compared above; this is what gets stored.
+    const marked = normalize(htmlToMarks(element));
+    const valueToStore =
+      prefix || suffix
+        ? fieldValue
+        : marked || fieldValue;
+
     element.setAttribute("data-weavr-saving", "1");
-    if (!emit("weavr://text-edited", { fieldIds: [fieldId], newValue: fieldValue })) {
+    if (!emit("weavr://text-edited", { fieldIds: [fieldId], newValue: valueToStore })) {
       // Never leave an unsaved change looking saved.
       element.removeAttribute("data-weavr-saving");
       element.setAttribute("data-weavr-error", "1");
@@ -763,11 +945,13 @@
      */
     setValues(entries) {
       valueIndex = new Map();
+      rawByValue = new Map();
       maxValueLength = 0;
       for (const entry of entries) {
         const key = normalize(entry.value);
         if (!key) continue;
         valueIndex.set(key, entry.fields);
+        if (entry.raw) rawByValue.set(key, entry.raw);
         if (key.length > maxValueLength) maxValueLength = key.length;
       }
       queueRefresh();
@@ -801,6 +985,7 @@
         document.removeEventListener("keyup", trackBypassKey, true);
         window.removeEventListener("blur", clearBypassKey);
         window.removeEventListener("resize", queueRefresh);
+        closeToolbar();
         clearBypassKey();
         observer.disconnect();
         document.querySelectorAll(`[${EDITABLE_ATTR}]`).forEach((element) => {
@@ -824,10 +1009,13 @@
       selectorFor(fieldIds)
         .forEach((element) => {
           element.removeAttribute("data-weavr-saving");
+          element.dataset.weavrMarks = savedValue;
           // Re-attach the literal parts so the baseline matches what's shown.
           const prefix = element.dataset.weavrPrefix || "";
           const suffix = element.dataset.weavrSuffix || "";
-          element.dataset.weavrOriginal = normalize(prefix + savedValue + suffix);
+          element.dataset.weavrOriginal = stripMarks(
+            normalize(prefix + savedValue + suffix),
+          );
         });
     },
 

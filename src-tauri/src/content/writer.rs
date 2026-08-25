@@ -125,8 +125,9 @@ fn emphasized_phrases(raw: &str) -> Vec<String> {
 /// is predictable and never corrupts the sentence — the alternative, guessing
 /// where the markers should now go, could mangle the text.
 fn reapply_emphasis(old_raw: &str, new_plain: &str) -> String {
-    // Already carries markers (edited via the forms, not the page) — leave it.
-    if new_plain.contains("**") {
+    // Already carries markers — the editor formatted it explicitly, so its
+    // marks win over anything inferred from the previous value.
+    if new_plain.contains("**") || new_plain.contains("__") {
         return new_plain.to_string();
     }
 
