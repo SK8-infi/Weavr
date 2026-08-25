@@ -154,35 +154,41 @@ export default function ContentPanel({ projectPath }) {
  * is always correct.
  */
 function FieldChooser({ choice, groups, onDismiss, onSaved, onError }) {
-  const [savingId, setSavingId] = useState(null);
+  // Editing happens inline rather than through window.prompt, which a desktop
+  // webview may simply ignore — leaving the click doing nothing at all.
+  const [picked, setPicked] = useState(null);
 
   const options = useMemo(() => {
     const wanted = new Set(choice.fieldIds || []);
-    return groups
-      .flatMap((g) => g.fields)
-      .filter((f) => wanted.has(f.id));
+    return groups.flatMap((g) => g.fields).filter((f) => wanted.has(f.id));
   }, [choice, groups]);
 
-  async function choose(field) {
-    const next = window.prompt(`New text for ${friendlyPath(field.json_path)}`, field.value);
-    if (next === null || next === field.value) return;
-    setSavingId(field.id);
-    try {
-      await invoke("content_update", { fieldId: field.id, newValue: next });
-      onSaved();
-    } catch (err) {
-      onError(String(err));
-    } finally {
-      setSavingId(null);
-    }
+  if (picked) {
+    return (
+      <div className="mx-3 mt-2 animate-fade-up rounded-xl bg-canvas-0 p-3 shadow-raised">
+        <div className="mb-1.5 flex items-start justify-between gap-2">
+          <span className="text-[11px] font-medium text-canvas-700">
+            {friendlyFileName(picked.file)} › {friendlyPath(picked.json_path)}
+          </span>
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="shrink-0 text-[11px] text-canvas-400 hover:text-canvas-700"
+          >
+            ✕
+          </button>
+        </div>
+        <FieldEditor field={picked} onSaved={onSaved} onError={onError} />
+      </div>
+    );
   }
 
   return (
     <div className="mx-3 mt-2 animate-fade-up rounded-xl bg-caution-50 p-3">
       <div className="flex items-start justify-between gap-2">
         <p className="text-[11px] leading-relaxed text-caution-700">
-          “{choice.text}” appears in {options.length} places. Which one did you
-          mean?
+          “{choice.text}” is used in {options.length} places. Which one do you
+          want to change?
         </p>
         <button
           type="button"
@@ -198,9 +204,8 @@ function FieldChooser({ choice, groups, onDismiss, onSaved, onError }) {
           <button
             key={field.id}
             type="button"
-            disabled={savingId !== null}
-            onClick={() => choose(field)}
-            className="rounded-lg bg-canvas-0 px-2.5 py-1.5 text-left text-[11px] text-canvas-700 shadow-panel transition hover:bg-canvas-50 disabled:opacity-50"
+            onClick={() => setPicked(field)}
+            className="rounded-lg bg-canvas-0 px-2.5 py-1.5 text-left text-[11px] text-canvas-700 shadow-panel transition hover:bg-canvas-50"
           >
             <span className="block truncate font-medium">
               {friendlyFileName(field.file)}
