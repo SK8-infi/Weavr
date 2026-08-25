@@ -49,7 +49,7 @@ export default function ContentPanel({ projectPath }) {
       listen("weavr://content-changed", reload),
       listen("weavr://edit-failed", (e) => setError(String(e.payload))),
       // Clicking text on the site that several fields could have produced.
-      listen("weavr://choose-field", (e) => setChoice(e.payload)),
+      listen("weavr://show-field-choice", (e) => setChoice(e.payload)),
     ];
     return () => subs.forEach((s) => s.then((unlisten) => unlisten()));
     // eslint-disable-next-line react-hooks/exhaustive-deps

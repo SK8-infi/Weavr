@@ -15,9 +15,16 @@ use crate::state::AppState;
 pub const TEXT_EDITED_EVENT: &str = "weavr://text-edited";
 /// The preview page announcing that its bridge is installed and wants values.
 pub const BRIDGE_READY_EVENT: &str = "weavr://bridge-ready";
-/// Text the preview couldn't pin to one field, passed to the panel so the
-/// user can say which they meant.
+/// Raised by the preview when clicked text matches several fields.
 pub const CHOOSE_FIELD_EVENT: &str = "weavr://choose-field";
+/// Sent on to the panel so the user can say which field they meant.
+///
+/// Deliberately a different name from the event that triggers it: `listen` is
+/// global, so re-emitting the same name would deliver the message straight
+/// back to this handler and recurse until the stack overflowed.
+pub const SHOW_FIELD_CHOICE_EVENT: &str = "weavr://show-field-choice";
+/// Sent to the panel when a write was refused.
+pub const EDIT_FAILED_EVENT: &str = "weavr://edit-failed";
 /// Emitted for the dashboard so it can refresh its content forms after an
 /// in-place edit.
 pub const CONTENT_CHANGED_EVENT: &str = "weavr://content-changed";
@@ -44,7 +51,7 @@ pub fn register(app: &AppHandle) {
     app.listen(CHOOSE_FIELD_EVENT, move |event| {
         let payload = serde_json::from_str::<serde_json::Value>(event.payload())
             .unwrap_or(serde_json::Value::Null);
-        let _ = choose_handle.emit_to(layout::PANEL_LABEL, CHOOSE_FIELD_EVENT, payload);
+        let _ = choose_handle.emit_to(layout::PANEL_LABEL, SHOW_FIELD_CHOICE_EVENT, payload);
     });
 
     let handle = app.clone();
@@ -118,7 +125,33 @@ fn report_result(app: &AppHandle, payload: &TextEditedPayload, result: Result<()
             let _ = preview.eval(&format!(
                 "window.__weavrEditBridge && window.__weavrEditBridge.rejectSave({field});"
             ));
-            let _ = app.emit_to(layout::PANEL_LABEL, "weavr://edit-failed", message);
+            let _ = app.emit_to(layout::PANEL_LABEL, EDIT_FAILED_EVENT, message);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `listen` is global, so a handler that emits the event it listens for
+    /// receives its own message and recurses until the stack overflows —
+    /// which crashed the whole app when clicking ambiguous text. Keep the two
+    /// sets disjoint.
+    #[test]
+    fn no_handler_emits_an_event_it_listens_for() {
+        let listened = [BRIDGE_READY_EVENT, CHOOSE_FIELD_EVENT, TEXT_EDITED_EVENT];
+        let emitted = [
+            SHOW_FIELD_CHOICE_EVENT,
+            CONTENT_CHANGED_EVENT,
+            EDIT_FAILED_EVENT,
+        ];
+
+        for name in emitted {
+            assert!(
+                !listened.contains(&name),
+                "{name} is both listened for and emitted, which would loop"
+            );
         }
     }
 }
