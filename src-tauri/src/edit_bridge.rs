@@ -15,6 +15,9 @@ use crate::state::AppState;
 pub const TEXT_EDITED_EVENT: &str = "weavr://text-edited";
 /// The preview page announcing that its bridge is installed and wants values.
 pub const BRIDGE_READY_EVENT: &str = "weavr://bridge-ready";
+/// Text the preview couldn't pin to one field, passed to the panel so the
+/// user can say which they meant.
+pub const CHOOSE_FIELD_EVENT: &str = "weavr://choose-field";
 /// Emitted for the dashboard so it can refresh its content forms after an
 /// in-place edit.
 pub const CONTENT_CHANGED_EVENT: &str = "weavr://content-changed";
@@ -33,6 +36,15 @@ pub fn register(app: &AppHandle) {
     let ready_handle = app.clone();
     app.listen(BRIDGE_READY_EVENT, move |_event| {
         let _ = crate::commands::preview_commands::push_editable_values(&ready_handle);
+    });
+
+    // Relay the preview's request straight to the panel, which has the field
+    // names and current values needed to present a choice.
+    let choose_handle = app.clone();
+    app.listen(CHOOSE_FIELD_EVENT, move |event| {
+        let payload = serde_json::from_str::<serde_json::Value>(event.payload())
+            .unwrap_or(serde_json::Value::Null);
+        let _ = choose_handle.emit_to(layout::PANEL_LABEL, CHOOSE_FIELD_EVENT, payload);
     });
 
     let handle = app.clone();

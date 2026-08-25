@@ -29,6 +29,7 @@ export default function ContentPanel({ projectPath }) {
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [openFile, setOpenFile] = useState(null);
+  const [choice, setChoice] = useState(null);
 
   async function reload() {
     try {
@@ -46,6 +47,8 @@ export default function ContentPanel({ projectPath }) {
     const subs = [
       listen("weavr://content-changed", reload),
       listen("weavr://edit-failed", (e) => setError(String(e.payload))),
+      // Clicking text on the site that several fields could have produced.
+      listen("weavr://choose-field", (e) => setChoice(e.payload)),
     ];
     return () => subs.forEach((s) => s.then((unlisten) => unlisten()));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -104,6 +107,19 @@ export default function ContentPanel({ projectPath }) {
         )}
       </div>
 
+      {choice && (
+        <FieldChooser
+          choice={choice}
+          groups={summary.groups}
+          onDismiss={() => setChoice(null)}
+          onSaved={() => {
+            setChoice(null);
+            reload();
+          }}
+          onError={setError}
+        />
+      )}
+
       <div className="mt-2 min-h-0 flex-1 overflow-y-auto px-3 pb-3">
         {groups.length === 0 && (
           <p className="px-1 py-6 text-center text-[12px] text-canvas-400">
@@ -125,6 +141,75 @@ export default function ContentPanel({ projectPath }) {
             />
           ))}
         </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Shown when text clicked on the site is backed by more than one field.
+ *
+ * The alternative would be picking one and hoping — which quietly rewrites an
+ * unrelated part of the site when it guesses wrong. Asking costs one click and
+ * is always correct.
+ */
+function FieldChooser({ choice, groups, onDismiss, onSaved, onError }) {
+  const [savingId, setSavingId] = useState(null);
+
+  const options = useMemo(() => {
+    const wanted = new Set(choice.fieldIds || []);
+    return groups
+      .flatMap((g) => g.fields)
+      .filter((f) => wanted.has(f.id));
+  }, [choice, groups]);
+
+  async function choose(field) {
+    const next = window.prompt(`New text for ${friendlyPath(field.json_path)}`, field.value);
+    if (next === null || next === field.value) return;
+    setSavingId(field.id);
+    try {
+      await invoke("content_update", { fieldId: field.id, newValue: next });
+      onSaved();
+    } catch (err) {
+      onError(String(err));
+    } finally {
+      setSavingId(null);
+    }
+  }
+
+  return (
+    <div className="mx-3 mt-2 animate-fade-up rounded-xl bg-caution-50 p-3">
+      <div className="flex items-start justify-between gap-2">
+        <p className="text-[11px] leading-relaxed text-caution-700">
+          “{choice.text}” appears in {options.length} places. Which one did you
+          mean?
+        </p>
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="shrink-0 text-[11px] text-caution-700/60 hover:text-caution-700"
+        >
+          ✕
+        </button>
+      </div>
+
+      <div className="mt-2 flex flex-col gap-1">
+        {options.map((field) => (
+          <button
+            key={field.id}
+            type="button"
+            disabled={savingId !== null}
+            onClick={() => choose(field)}
+            className="rounded-lg bg-canvas-0 px-2.5 py-1.5 text-left text-[11px] text-canvas-700 shadow-panel transition hover:bg-canvas-50 disabled:opacity-50"
+          >
+            <span className="block truncate font-medium">
+              {friendlyFileName(field.file)}
+            </span>
+            <span className="block truncate text-canvas-400">
+              {friendlyPath(field.json_path)}
+            </span>
+          </button>
+        ))}
       </div>
     </div>
   );

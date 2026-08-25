@@ -14,6 +14,8 @@
 
   const STYLE_ID = "weavr-edit-styles";
   const EDITABLE_ATTR = "data-weavr-field";
+  /** Text that came from the data but matches more than one field. */
+  const AMBIGUOUS_ATTR = "data-weavr-ambiguous";
 
   /** @type {Map<string, Array<{field_id: string, source: string}>>} */
   let valueIndex = new Map();
@@ -49,6 +51,17 @@
       [${EDITABLE_ATTR}][data-weavr-error="1"] {
         outline: 2px solid rgb(220, 38, 38);
         background-color: rgba(220, 38, 38, 0.08);
+      }
+      /* Backed by the data, but several fields share these words — clicking
+         asks which one is meant instead of picking one. */
+      [${AMBIGUOUS_ATTR}] {
+        outline: 1px dashed rgba(217, 119, 6, 0.5);
+        outline-offset: 2px;
+        cursor: help;
+      }
+      [${AMBIGUOUS_ATTR}]:hover {
+        outline: 2px solid rgb(217, 119, 6);
+        background-color: rgba(217, 119, 6, 0.08);
       }
       /* Holding Ctrl/Cmd switches to using the site rather than editing it. */
       body.weavr-bypass [${EDITABLE_ATTR}] {
@@ -300,8 +313,19 @@
     }
 
     for (const [element, key] of hits) {
-      const fieldId = resolveField(element, valueIndex.get(key), occurrences);
-      if (fieldId) candidates.set(element, { fieldId, prefix: "", suffix: "" });
+      const entries = valueIndex.get(key);
+      const fieldId = resolveField(element, entries, occurrences);
+      if (fieldId) {
+        candidates.set(element, { fieldId, prefix: "", suffix: "" });
+      } else if (entries && entries.length > 1) {
+        // The text is definitely from the data, but several fields hold the
+        // same words and nothing on the page separates them. Rather than
+        // guess — which would silently rewrite an unrelated part of the site
+        // — offer it for the user to choose from in the panel.
+        candidates.set(element, {
+          ambiguous: narrowBySource(element, entries).map((e) => e.field_id),
+        });
+      }
     }
 
     // Text a component builds from a literal plus a field ("Track 5: " + title,
@@ -336,6 +360,11 @@
   function markEditable() {
     if (!enabled) return;
     for (const [element, match] of elementsToMark()) {
+      if (match.ambiguous) {
+        element.setAttribute(AMBIGUOUS_ATTR, match.ambiguous.join(" "));
+        element.addEventListener("click", onAmbiguousClick);
+        continue;
+      }
       element.setAttribute(EDITABLE_ATTR, match.fieldId);
       element.setAttribute("contenteditable", "true");
       element.setAttribute("spellcheck", "false");
@@ -351,6 +380,17 @@
       element.addEventListener("keydown", onKeyDown);
       element.addEventListener("blur", onBlur);
     }
+  }
+
+  /** Hands the choice to the panel, which knows each field's name and value. */
+  function onAmbiguousClick(event) {
+    if (!enabled || isBypass(event)) return;
+    event.preventDefault();
+    const element = event.currentTarget;
+    emit("weavr://choose-field", {
+      text: normalize(element.textContent || ""),
+      fieldIds: (element.getAttribute(AMBIGUOUS_ATTR) || "").split(" ").filter(Boolean),
+    });
   }
 
   function onKeyDown(event) {
@@ -564,6 +604,10 @@
           delete element.dataset.weavrOriginal;
           element.removeEventListener("keydown", onKeyDown);
           element.removeEventListener("blur", onBlur);
+        });
+        document.querySelectorAll(`[${AMBIGUOUS_ATTR}]`).forEach((element) => {
+          element.removeAttribute(AMBIGUOUS_ATTR);
+          element.removeEventListener("click", onAmbiguousClick);
         });
       }
     },
