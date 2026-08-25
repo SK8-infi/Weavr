@@ -8,11 +8,10 @@ export const fieldClasses = (isDirty, isBusy) =>
     "text-canvas-900 placeholder:text-canvas-400",
     "outline-none transition-all duration-200",
     "shadow-[inset_0_0_0_1px_var(--color-canvas-200)]",
-    "hover:bg-canvas-0 hover:shadow-[inset_0_0_0_1px_var(--color-canvas-300)]",
-    "focus:bg-canvas-0 focus:shadow-[inset_0_0_0_1.5px_var(--color-brand-500),0_0_0_4px_var(--color-brand-100)]",
+    "hover:shadow-[inset_0_0_0_1px_var(--color-canvas-300)]",
+    "focus:shadow-[inset_0_0_0_1.5px_var(--color-brand-500),0_0_0_4px_rgba(124,108,255,0.16)]",
     // Unsaved work keeps a quiet accent edge rather than shouting.
-    isDirty &&
-      "bg-canvas-0 shadow-[inset_0_0_0_1.5px_var(--color-brand-300)]",
+    isDirty && "shadow-[inset_0_0_0_1.5px_var(--color-brand-300)]",
     isBusy && "opacity-60",
   );
 
@@ -23,8 +22,8 @@ export function FieldLabel({ children, hint }) {
         {children}
       </span>
       {hint && (
-        <span className="flex shrink-0 items-center gap-1 text-[10px] font-medium text-brand-600">
-          <span className="h-1 w-1 rounded-full bg-brand-500" />
+        <span className="flex shrink-0 items-center gap-1 text-[10px] font-medium text-brand-400">
+          <span className="h-1 w-1 rounded-full bg-brand-400" />
           {hint}
         </span>
       )}
@@ -46,10 +45,12 @@ export function SearchInput({ value, onChange, placeholder }) {
         onChange={onChange}
         placeholder={placeholder}
         className={cn(
-          "w-full rounded-[10px] bg-canvas-0 py-2 pl-9 pr-3 text-[13px]",
-          "shadow-panel outline-none transition-all duration-200",
+          "w-full rounded-[10px] bg-canvas-0 py-2 pl-9 pr-3 text-[13px] text-canvas-900",
+          "outline-none transition-all duration-200",
+          "shadow-[inset_0_0_0_1px_var(--color-canvas-200)]",
           "placeholder:text-canvas-400",
-          "focus:shadow-[0_0_0_1.5px_var(--color-brand-500),0_0_0_4px_var(--color-brand-100)]",
+          "hover:shadow-[inset_0_0_0_1px_var(--color-canvas-300)]",
+          "focus:shadow-[inset_0_0_0_1.5px_var(--color-brand-500),0_0_0_4px_rgba(124,108,255,0.16)]",
         )}
       />
     </div>

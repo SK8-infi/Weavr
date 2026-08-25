@@ -84,7 +84,7 @@ export default function ProjectSetup({ project, onBack, onReady }) {
       </Button>
 
       <div className="flex items-center gap-3">
-        <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-50 text-brand-600">
+        <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-50 text-brand-400">
           <Icon name="sparkle" className="h-5 w-5" />
         </span>
         <span>
@@ -174,7 +174,7 @@ function StepDot({ done, active, failed }) {
   if (active) {
     return (
       <span className="relative flex h-5 w-5 shrink-0 items-center justify-center">
-        <span className="absolute inset-0 animate-pulse-soft rounded-full bg-brand-100" />
+        <span className="absolute inset-0 animate-pulse-soft rounded-full bg-brand-200/50" />
         <span className="relative h-4 w-4 animate-spin rounded-full border-[1.5px] border-brand-500 border-t-transparent" />
       </span>
     );

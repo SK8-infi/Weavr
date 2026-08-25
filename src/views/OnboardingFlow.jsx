@@ -67,9 +67,9 @@ export default function OnboardingFlow({ onAuthenticated }) {
           {/* A soft bloom behind the mark gives the screen a focal point. */}
           <div
             aria-hidden="true"
-            className="absolute -inset-4 rounded-full bg-brand-400/25 blur-2xl"
+            className="absolute -inset-6 rounded-full bg-brand-500/40 blur-3xl"
           />
-          <WeavrMark className="relative h-14 w-14 drop-shadow-[0_6px_16px_rgba(90,69,224,0.3)]" />
+          <WeavrMark className="relative h-14 w-14 drop-shadow-[0_8px_24px_rgba(124,108,255,0.55)]" />
         </div>
 
         <h1 className="text-[26px] font-semibold leading-tight tracking-[-0.03em] text-canvas-900">
@@ -115,12 +115,12 @@ export default function OnboardingFlow({ onAuthenticated }) {
               type="button"
               onClick={copyCode}
               title="Copy code"
-              className="group mt-3 w-full rounded-xl bg-canvas-50 py-4 transition-colors duration-200 hover:bg-brand-50"
+              className="group mt-3 w-full rounded-xl bg-canvas-50 py-4 shadow-panel transition-colors duration-200 hover:bg-brand-50/80"
             >
               <span className="font-mono text-[28px] font-semibold tracking-[0.2em] text-canvas-900">
                 {deviceCode.user_code}
               </span>
-              <span className="mt-1.5 flex items-center justify-center gap-1 text-[10px] font-medium uppercase tracking-wider text-canvas-400 transition-colors group-hover:text-brand-600">
+              <span className="mt-1.5 flex items-center justify-center gap-1 text-[10px] font-medium uppercase tracking-wider text-canvas-400 transition-colors group-hover:text-brand-400">
                 {copied ? (
                   <>
                     <Icon name="check" className="h-3 w-3" />

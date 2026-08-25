@@ -3,14 +3,12 @@ import { cn } from "../../utils/cn";
 const VARIANTS = {
   primary: cn(
     "bg-brand-gradient text-white shadow-accent",
-    // A top highlight suggests a lit surface rather than a flat fill.
-    "[box-shadow:var(--shadow-accent),var(--shadow-inset-top)]",
-    "hover:brightness-[1.07]",
+    "hover:brightness-110 hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.25),0_8px_26px_-6px_rgba(124,108,255,0.8)]",
   ),
   secondary:
-    "bg-canvas-0 text-canvas-800 shadow-panel hover:shadow-raised hover:-translate-y-px",
-  ghost: "text-canvas-500 hover:text-canvas-900 hover:bg-canvas-200/60",
-  danger: "bg-critical-600 text-white shadow-panel hover:bg-critical-700",
+    "bg-canvas-100 text-canvas-800 shadow-panel hover:bg-canvas-200 hover:text-canvas-900",
+  ghost: "text-canvas-400 hover:bg-canvas-100 hover:text-canvas-900",
+  danger: "bg-critical-100 text-critical-700 shadow-panel hover:bg-critical-50",
 };
 
 const SIZES = {
@@ -38,7 +36,7 @@ export default function Button({
         "transition-all duration-200 ease-[var(--ease-out-soft)]",
         // A small give on press makes the surface feel physical.
         "active:translate-y-0 active:scale-[0.97]",
-        "disabled:pointer-events-none disabled:opacity-40 disabled:shadow-none",
+        "disabled:pointer-events-none disabled:opacity-35 disabled:shadow-none",
         VARIANTS[variant],
         SIZES[size],
         className,

@@ -3,67 +3,77 @@
 /*
  * Weavr's own interface.
  *
- * The panel sits against the user's website, so it reads as tooling rather
- * than page content: a cool slate ground under floating white surfaces, one
- * indigo-violet accent carried through the mark, primary actions and focus.
- * Depth comes from layered shadows and translucency rather than borders, so
- * the panel feels like an app rather than a form.
+ * Deep indigo-navy chrome against the user's warm ivory site: the split reads
+ * instantly as "tool" and "page" without any border between them. A faint grid
+ * gives the ground some structure, and light comes from coloured glows rather
+ * than drop shadows, which don't read on dark surfaces.
+ *
+ * The canvas ramp keeps its meaning from the light theme — low numbers are
+ * surfaces you place content on, high numbers are text — so component classes
+ * carry over unchanged.
  */
 @theme {
-  /* Cool slate — reads as chrome beside the site's warm ivory. */
-  --color-canvas-0: #ffffff;
-  --color-canvas-50: #f7f8fa;
-  --color-canvas-100: #eef0f4;
-  --color-canvas-200: #e3e6ec;
-  --color-canvas-300: #cfd4de;
-  --color-canvas-400: #9aa2b1;
-  --color-canvas-500: #6b7382;
-  --color-canvas-600: #4d5461;
-  --color-canvas-700: #3a4049;
-  --color-canvas-800: #262b33;
-  --color-canvas-900: #171a20;
-  --color-canvas-950: #0d0f13;
+  --color-canvas-0: #161b2b; /* raised surface: cards, panels */
+  --color-canvas-50: #0c0f19; /* the ground */
+  --color-canvas-100: #1e2437; /* hover fill */
+  --color-canvas-200: #2a3149; /* hairlines, dividers */
+  --color-canvas-300: #3b4463; /* stronger edges */
+  /* Light enough to clear 4.5:1 against both the ground and a raised surface
+     — the obvious muted grey measured 3.9:1, which fails at these sizes. */
+  --color-canvas-400: #7d86a8; /* muted text */
+  --color-canvas-500: #99a2be; /* secondary text */
+  --color-canvas-600: #b3bad2;
+  --color-canvas-700: #ccd2e4;
+  --color-canvas-800: #e2e6f1;
+  --color-canvas-900: #f4f6fb; /* primary text */
+  --color-canvas-950: #05070e; /* deepest: log output */
 
-  --color-brand-50: #f2f1ff;
-  --color-brand-100: #e6e4ff;
-  --color-brand-200: #cfcbff;
-  --color-brand-300: #aca4ff;
-  --color-brand-400: #8b7dfb;
-  --color-brand-500: #6d5cf0;
-  --color-brand-600: #5a45e0;
-  --color-brand-700: #4a36bd;
+  /* Violet with a little more saturation than the light theme, so it holds up
+     against a dark ground without glowing out. */
+  --color-brand-50: #1d1c3f;
+  --color-brand-100: #272554;
+  --color-brand-200: #38337d;
+  --color-brand-300: #5b51c4;
+  --color-brand-400: #8b7bff;
+  --color-brand-500: #7c6cff;
+  --color-brand-600: #6a55f5;
+  --color-brand-700: #5940d8;
 
-  --color-positive-50: #ecfdf3;
-  --color-positive-100: #d3f8e0;
-  --color-positive-600: #0d9f6e;
-  --color-positive-700: #0a7f57;
+  --color-positive-50: #0c2b23;
+  --color-positive-100: #123b30;
+  --color-positive-600: #34d399;
+  --color-positive-700: #6ee7b7;
 
-  --color-caution-50: #fff8eb;
-  --color-caution-100: #fdefc8;
-  --color-caution-600: #c77b09;
-  --color-caution-700: #a16207;
+  --color-caution-50: #2e2411;
+  --color-caution-100: #3d3016;
+  --color-caution-600: #fbbf24;
+  --color-caution-700: #fcd34d;
 
-  --color-critical-50: #fef2f3;
-  --color-critical-100: #fde0e3;
-  --color-critical-600: #e03d4e;
-  --color-critical-700: #ba2436;
+  --color-critical-50: #331520;
+  --color-critical-100: #451a28;
+  --color-critical-600: #fb7185;
+  --color-critical-700: #fda4af;
 
   --font-sans:
     "Inter var", "Inter", ui-sans-serif, -apple-system,
     "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
   --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "Consolas", monospace;
 
-  /* An elevation scale: each step adds spread, not just darkness. */
+  /* On dark, depth comes from a lit top edge and a hairline, not a drop
+     shadow — a shadow against near-black is invisible. */
   --shadow-panel:
-    0 1px 2px rgba(13, 15, 19, 0.04), 0 0 0 1px rgba(13, 15, 19, 0.04);
+    inset 0 1px 0 rgba(255, 255, 255, 0.045),
+    0 0 0 1px rgba(255, 255, 255, 0.06);
   --shadow-raised:
-    0 1px 2px rgba(13, 15, 19, 0.04), 0 4px 12px -2px rgba(13, 15, 19, 0.06),
-    0 0 0 1px rgba(13, 15, 19, 0.05);
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 0 0 1px rgba(255, 255, 255, 0.08), 0 8px 24px -8px rgba(0, 0, 0, 0.7);
   --shadow-float:
-    0 2px 4px rgba(13, 15, 19, 0.04), 0 12px 28px -6px rgba(13, 15, 19, 0.12),
-    0 0 0 1px rgba(13, 15, 19, 0.05);
-  --shadow-accent: 0 4px 14px -3px rgba(90, 69, 224, 0.45);
-  --shadow-inset-top: inset 0 1px 0 rgba(255, 255, 255, 0.14);
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    0 0 0 1px rgba(255, 255, 255, 0.1), 0 18px 40px -12px rgba(0, 0, 0, 0.8);
+  --shadow-accent:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    0 6px 20px -6px rgba(124, 108, 255, 0.65);
+  --shadow-inset-top: inset 0 1px 0 rgba(255, 255, 255, 0.18);
 
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
@@ -77,23 +87,70 @@ body,
 
 body {
   margin: 0;
+  position: relative;
   font-family: var(--font-sans);
   color: var(--color-canvas-900);
+  background-color: var(--color-canvas-50);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01";
   letter-spacing: -0.006em;
 
-  /* A faint wash rather than flat grey, so large empty areas have some life. */
-  background-color: var(--color-canvas-50);
-  background-image:
-    radial-gradient(80rem 40rem at 110% -10%, rgba(109, 92, 240, 0.07), transparent 60%),
-    radial-gradient(50rem 30rem at -10% 0%, rgba(109, 92, 240, 0.05), transparent 55%);
-  background-attachment: fixed;
-
   /* Chrome, not a document — selection should be deliberate. */
   user-select: none;
   cursor: default;
+  overflow: hidden;
+}
+
+/*
+ * A blueprint grid, faded out towards the edges so it suggests a surface
+ * rather than tiling visibly. Sits behind everything and never intercepts a
+ * click.
+ */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(148, 163, 220, 0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 220, 0.07) 1px, transparent 1px);
+  background-size: 34px 34px;
+  background-position: center center;
+  /* Strongest in the middle, gone at the corners. */
+  mask-image: radial-gradient(120% 90% at 50% 0%, black 20%, transparent 78%);
+  -webkit-mask-image: radial-gradient(
+    120% 90% at 50% 0%,
+    black 20%,
+    transparent 78%
+  );
+}
+
+/* Two coloured glows give the ground depth without any visible object. */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    radial-gradient(
+      42rem 26rem at 78% -8%,
+      rgba(124, 108, 255, 0.2),
+      transparent 62%
+    ),
+    radial-gradient(
+      34rem 22rem at -12% 12%,
+      rgba(56, 189, 248, 0.09),
+      transparent 60%
+    );
+}
+
+/* Application chrome sits above the ground layers. */
+#root {
+  position: relative;
+  z-index: 1;
 }
 
 input,
@@ -136,20 +193,26 @@ textarea,
   .bg-brand-gradient {
     background-image: linear-gradient(
       135deg,
-      var(--color-brand-500),
+      var(--color-brand-400),
       var(--color-brand-700)
     );
   }
 
   .text-brand-gradient {
     background-image: linear-gradient(
-      135deg,
-      var(--color-brand-500),
-      var(--color-brand-700)
+      120deg,
+      var(--color-brand-400),
+      #c4b5fd 55%,
+      #7dd3fc
     );
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
+  }
+
+  /* Hairline top edge, as if lit from above. */
+  .edge-lit {
+    box-shadow: var(--shadow-inset-top);
   }
 
   @keyframes weavr-fade-up {
@@ -205,19 +268,12 @@ textarea,
   .animate-shimmer {
     background-image: linear-gradient(
       90deg,
-      rgb(255 255 255 / 0.5) 0%,
-      var(--color-canvas-200) 45%,
-      rgb(255 255 255 / 0.5) 90%
+      rgba(255, 255, 255, 0.02) 0%,
+      rgba(255, 255, 255, 0.08) 45%,
+      rgba(255, 255, 255, 0.02) 90%
     );
     background-size: 200% 100%;
     animation: weavr-shimmer 1.5s linear infinite;
-  }
-
-  /* Ring that draws attention to a newly arrived panel without a border. */
-  .ring-accent-soft {
-    box-shadow:
-      0 0 0 1px rgba(109, 92, 240, 0.25),
-      0 0 0 4px rgba(109, 92, 240, 0.1);
   }
 }
 

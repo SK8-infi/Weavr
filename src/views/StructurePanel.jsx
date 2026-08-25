@@ -118,7 +118,7 @@ function ListGroup({ list, isOpen, busy, onToggle, onRun }) {
     <section
       className={cn(
         "overflow-hidden rounded-2xl transition-all duration-200",
-        isOpen ? "bg-canvas-0 shadow-raised" : "hover:bg-canvas-0/70 hover:shadow-panel",
+        isOpen ? "bg-canvas-0 shadow-raised" : "hover:bg-canvas-0/60",
       )}
     >
       <button

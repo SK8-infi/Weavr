@@ -57,7 +57,7 @@ export default function EditorView({ project, onBack }) {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <header className="bg-canvas-0/75 backdrop-blur-xl backdrop-saturate-150 flex shrink-0 items-center gap-1.5 px-2.5 py-2 shadow-panel">
+      <header className="bg-canvas-0/70 backdrop-blur-xl flex shrink-0 items-center gap-1.5 px-2.5 py-2 shadow-panel">
         <Button
           variant="ghost"
           size="icon"
@@ -93,7 +93,7 @@ export default function EditorView({ project, onBack }) {
       </header>
 
       {tab === "text" && (
-        <p className="shrink-0 bg-brand-50/70 px-4 py-2 text-[11px] leading-relaxed text-canvas-600">
+        <p className="shrink-0 bg-brand-50/50 px-4 py-2 text-[11px] leading-relaxed text-canvas-600">
           Click any text on your site to edit it. Hold <Kbd>Ctrl</Kbd> and click
           to follow a link or open a menu.
         </p>
@@ -127,7 +127,7 @@ function Rail({ tab, onOpen, onBack }) {
   }, []);
 
   return (
-    <div className="bg-canvas-0/75 backdrop-blur-xl backdrop-saturate-150 flex h-full flex-col items-center gap-1 py-2.5 shadow-panel">
+    <div className="bg-canvas-0/70 backdrop-blur-xl flex h-full flex-col items-center gap-1 py-2.5 shadow-panel">
       <button
         type="button"
         onClick={onBack}
@@ -148,7 +148,7 @@ function Rail({ tab, onOpen, onBack }) {
             "transition-all duration-200 ease-[var(--ease-out-soft)]",
             tab === t.id
               ? "bg-brand-50 text-brand-600"
-              : "text-canvas-400 hover:bg-canvas-200/60 hover:text-canvas-700",
+              : "text-canvas-400 hover:bg-canvas-100 hover:text-canvas-700",
           )}
         >
           <Icon name={t.icon} />
@@ -168,7 +168,7 @@ function Rail({ tab, onOpen, onBack }) {
           type="button"
           onClick={() => onOpen(tab)}
           title="Open panel"
-          className="flex h-9 w-9 items-center justify-center rounded-xl text-canvas-400 transition-colors duration-200 hover:bg-canvas-200/60 hover:text-canvas-700"
+          className="flex h-9 w-9 items-center justify-center rounded-xl text-canvas-400 transition-colors duration-200 hover:bg-canvas-100 hover:text-canvas-700"
         >
           <Icon name="chevronRight" />
         </button>

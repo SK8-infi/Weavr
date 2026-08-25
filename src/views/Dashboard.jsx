@@ -135,7 +135,7 @@ function TitleBar({ user, onSignedOut }) {
   }
 
   return (
-    <header className="bg-canvas-0/75 backdrop-blur-xl backdrop-saturate-150 sticky top-0 z-10 flex shrink-0 items-center justify-between px-4 py-2.5 shadow-panel">
+    <header className="bg-canvas-0/70 backdrop-blur-xl sticky top-0 z-10 flex shrink-0 items-center justify-between px-4 py-2.5 shadow-panel">
       <span className="flex items-center gap-2">
         <WeavrMark className="h-[22px] w-[22px]" />
         <span className="text-[13px] font-semibold tracking-[-0.01em] text-canvas-900">
@@ -147,7 +147,7 @@ function TitleBar({ user, onSignedOut }) {
         <img
           src={user.avatar_url}
           alt=""
-          className="h-6 w-6 rounded-full ring-1 ring-canvas-200"
+          className="h-6 w-6 rounded-full ring-1 ring-canvas-300"
         />
         <span className="max-w-[140px] truncate text-[12px] text-canvas-500">
           {user.name || user.login}

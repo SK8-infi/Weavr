@@ -59,7 +59,7 @@ export default function PublishBar() {
   const tone = notice ? TONE[notice.tone] : null;
 
   return (
-    <div className="bg-canvas-0/75 backdrop-blur-xl backdrop-saturate-150 shrink-0 px-3 py-3 shadow-[0_-1px_2px_rgba(13,15,19,0.04)]">
+    <div className="bg-canvas-0/70 backdrop-blur-xl shrink-0 px-3 py-3 shadow-[0_-1px_2px_rgba(13,15,19,0.04)]">
       {notice && (
         <div
           className={`mb-2.5 flex animate-pop items-start gap-1.5 rounded-lg px-2.5 py-2 text-[11px] leading-relaxed ${tone.cls}`}
