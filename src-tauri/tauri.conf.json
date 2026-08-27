@@ -28,6 +28,11 @@
     ],
     "resources": {
       "resources/node/win32-x64": "node/win32-x64"
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "embedBootstrapper"
+      }
     }
   }
 }

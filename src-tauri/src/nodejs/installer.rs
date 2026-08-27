@@ -43,7 +43,9 @@ where
     let npm_script = runtime::npm_cli_script(app)?;
     let cache_dir = paths::npm_cache_dir(app)?;
 
-    let mut child = Command::new(&node_bin)
+    let mut command = Command::new(&node_bin);
+    runtime::with_node_on_path(app, &mut command)?;
+    let mut child = command
         .arg(&npm_script)
         .arg("install")
         .arg("--no-audit")

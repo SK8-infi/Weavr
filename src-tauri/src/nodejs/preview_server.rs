@@ -99,7 +99,9 @@ pub async fn start(app: &AppHandle, project_dir: &Path) -> AppResult<String> {
     let script = launcher_script(app)?;
     let port = reserve_port()?;
 
-    let mut child = Command::new(&node_bin)
+    let mut command = Command::new(&node_bin);
+    runtime::with_node_on_path(app, &mut command)?;
+    let mut child = command
         .arg(&script)
         .arg(project_dir)
         .arg(port.to_string())
