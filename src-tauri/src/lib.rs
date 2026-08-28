@@ -17,6 +17,7 @@ use commands::preview_commands::{panel_set_expanded, preview_start, preview_stop
 use commands::publish_commands::{publish_now, publish_pending};
 use commands::repo_commands::{repo_clone, repo_list};
 use commands::setup_commands::project_install;
+use commands::sync_commands::{sync_pull, sync_status};
 use commands::structure_commands::{
     structure_duplicate, structure_lists, structure_move, structure_remove,
 };
@@ -58,7 +59,9 @@ pub fn run() {
             structure_lists,
             structure_duplicate,
             structure_remove,
-            structure_move
+            structure_move,
+            sync_status,
+            sync_pull
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

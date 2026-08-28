@@ -19,12 +19,12 @@ pub enum PublishOutcome {
     Published { commit: String, files: usize },
     /// Nothing to publish.
     NothingToDo,
-    /// The remote moved on independently — we stop rather than risk a merge
-    /// our surgical editor can't reason about.
+    /// Someone else changed the same files. Stopping is the only safe move:
+    /// merging two edits of one data field would silently discard one of them.
     RemoteDiverged { message: String },
 }
 
-fn credentials_callback(token: &str) -> RemoteCallbacks<'_> {
+pub fn credentials_callback(token: &str) -> RemoteCallbacks<'_> {
     let token = token.to_string();
     let mut callbacks = RemoteCallbacks::new();
     callbacks.credentials(move |_url, _username, _allowed| {
@@ -33,32 +33,74 @@ fn credentials_callback(token: &str) -> RemoteCallbacks<'_> {
     callbacks
 }
 
-/// Compares the local branch against its remote counterpart.
-enum RemoteState {
-    UpToDate,
-    LocalAhead,
-    Diverged,
-    NoRemoteBranch,
-}
-
-fn compare_with_remote(repo: &Repository, branch: &str) -> AppResult<RemoteState> {
+/// Catches this copy up with the remote before committing on top of it.
+///
+/// Being behind is the normal state when several people share a site, and
+/// almost always means somebody edited a different part of it. Those commits
+/// are taken on board so this publish lands on top of them.
+///
+/// It stops only when the incoming work touches a file being edited here.
+/// Two people rewriting the same field cannot be reconciled by a tool — a
+/// textual merge would keep one and silently lose the other — so the person
+/// editing is told, while their own changes are still safely in the file.
+///
+/// Returns `Some(outcome)` when publishing must not continue.
+fn integrate_remote(
+    repo: &Repository,
+    branch: &str,
+    files: &BTreeSet<String>,
+) -> AppResult<Option<PublishOutcome>> {
     let local = repo.head()?.peel_to_commit()?.id();
 
-    let remote_ref = format!("refs/remotes/origin/{branch}");
-    let Ok(remote) = repo.find_reference(&remote_ref) else {
-        return Ok(RemoteState::NoRemoteBranch);
+    let Ok(remote_ref) = repo.find_reference(&format!("refs/remotes/origin/{branch}")) else {
+        return Ok(None); // Branch doesn't exist upstream yet; the push creates it.
     };
-    let remote_oid = remote.peel_to_commit()?.id();
-
+    let remote_oid = remote_ref.peel_to_commit()?.id();
     if local == remote_oid {
-        return Ok(RemoteState::UpToDate);
+        return Ok(None);
     }
 
     let (ahead, behind) = repo.graph_ahead_behind(local, remote_oid)?;
-    Ok(match (ahead, behind) {
-        (_, 0) => RemoteState::LocalAhead,
-        _ => RemoteState::Diverged,
-    })
+    if behind == 0 {
+        return Ok(None); // Only ahead — nothing to take on board.
+    }
+
+    let incoming = super::sync::changed_files(repo, local, remote_oid)?;
+    let clashes: Vec<String> = incoming.intersection(files).cloned().collect();
+    if !clashes.is_empty() {
+        return Ok(Some(PublishOutcome::RemoteDiverged {
+            message: format!(
+                "Someone else has already changed {} on GitHub. Your changes are \
+                 still here and nothing was overwritten — get the latest, then \
+                 re-apply yours.",
+                super::sync::describe_files(&clashes)
+            ),
+        }));
+    }
+
+    if ahead > 0 {
+        return Ok(Some(PublishOutcome::RemoteDiverged {
+            message: "This copy has changes that never reached GitHub, and the \
+                      site has moved on since. Get the latest to sort it out."
+                .into(),
+        }));
+    }
+
+    // Safe to fast-forward: nothing incoming touches what's being edited, so
+    // the working copy keeps its unpublished edits.
+    let remote_commit = repo.find_commit(remote_oid)?;
+    let mut checkout = git2::build::CheckoutBuilder::new();
+    checkout.safe();
+    repo.checkout_tree(remote_commit.as_object(), Some(&mut checkout))?;
+    repo.reference(
+        &format!("refs/heads/{branch}"),
+        remote_oid,
+        true,
+        "weavr: catch up before publishing",
+    )?;
+    repo.set_head(&format!("refs/heads/{branch}"))?;
+
+    Ok(None)
 }
 
 /// Stages the given files, commits them, and pushes to origin.
@@ -84,12 +126,11 @@ pub fn publish(
     fetch_options.remote_callbacks(credentials_callback(token));
     remote.fetch(&[branch.as_str()], Some(&mut fetch_options), None)?;
 
-    if let RemoteState::Diverged = compare_with_remote(&repo, &branch)? {
-        return Ok(PublishOutcome::RemoteDiverged {
-            message: "Your site on GitHub has changes Weavr didn't make. \
-                      Publishing was stopped so nothing gets overwritten."
-                .into(),
-        });
+    // Someone else may have published since this copy was last synced. Their
+    // work usually touches different files, so take it on board and carry on
+    // rather than stopping for something that doesn't actually conflict.
+    if let Some(blocked) = integrate_remote(&repo, &branch, files)? {
+        return Ok(blocked);
     }
 
     let mut index = repo.index()?;
@@ -287,11 +328,13 @@ mod tests {
     }
 
     #[test]
-    fn stops_instead_of_merging_when_the_remote_moved_on() {
+    fn absorbs_an_upstream_commit_that_touches_nothing_local() {
         let (_guard, work, remote) = scratch_repo();
 
-        // Someone edits the site directly on GitHub: add a commit to the
-        // remote that the local clone has never seen.
+        // Someone else pushed, but not to anything being edited here. Sharing
+        // a site means being behind constantly, so this has to go through
+        // rather than stop — the conflicting case is covered separately, in
+        // git::sync's two-clone tests.
         {
             let remote_repo = Repository::open_bare(&remote).unwrap();
             let head = remote_repo.head().unwrap().peel_to_commit().unwrap();
@@ -325,8 +368,8 @@ mod tests {
         .expect("publish should return an outcome rather than erroring");
 
         assert!(
-            matches!(outcome, PublishOutcome::RemoteDiverged { .. }),
-            "diverged remote must stop the publish, got {outcome:?}"
+            matches!(outcome, PublishOutcome::Published { .. }),
+            "an unrelated upstream commit must not block publishing, got {outcome:?}"
         );
     }
 

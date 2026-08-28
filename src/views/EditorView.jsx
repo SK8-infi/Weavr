@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import ContentPanel from "./ContentPanel";
 import StructurePanel from "./StructurePanel";
 import PublishBar from "./PublishBar";
+import SyncBar from "./SyncBar";
 import Button from "../components/ui/Button";
 import Icon from "../components/ui/Icon";
 import WeavrMark from "../components/ui/WeavrMark";
@@ -91,6 +92,8 @@ export default function EditorView({ project, onBack }) {
           ))}
         </nav>
       </header>
+
+      <SyncBar />
 
       {tab === "text" && (
         <p className="shrink-0 bg-brand-50/50 px-4 py-2 text-[11px] leading-relaxed text-canvas-600">
