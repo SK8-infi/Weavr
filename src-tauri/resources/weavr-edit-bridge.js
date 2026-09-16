@@ -777,7 +777,7 @@
     if (event.key === "Escape") {
       event.preventDefault();
       const element = event.currentTarget;
-      element.textContent = element.dataset.weavrOriginal ?? element.textContent;
+      restore(element);
       element.blur();
     }
   }
@@ -790,11 +790,11 @@
     const newValue = normalize(element.textContent || "");
     const original = element.dataset.weavrOriginal;
 
-    if (original === undefined || newValue === original) return;
+    if (original === undefined) return;
     if (!newValue) {
       // Refuse to blank a field by accident; restore and let the user use the
       // side panel if they really mean to clear it.
-      element.textContent = original;
+      restore(element);
       return;
     }
 
@@ -803,33 +803,60 @@
     // so put it back rather than guess.
     const prefix = element.dataset.weavrPrefix || "";
     const suffix = element.dataset.weavrSuffix || "";
-    let fieldValue = newValue;
+
     if (prefix || suffix) {
+      // Emphasis is not offered on these: only the field's share is stored, and
+      // a marker spanning the literal part would have nowhere to go.
+      if (newValue === original) return;
       const fits =
         newValue.startsWith(prefix) &&
         newValue.endsWith(suffix) &&
         newValue.length > prefix.length + suffix.length;
       if (!fits) {
-        element.textContent = original;
+        restore(element);
         return;
       }
-      fieldValue = newValue.slice(prefix.length, newValue.length - suffix.length);
+      return send(element, fieldId, newValue.slice(prefix.length, newValue.length - suffix.length));
     }
 
-    // Send the marker form so bold/italic/underline survive the round trip.
-    // The plain text is what was compared above; this is what gets stored.
-    const marked = normalize(htmlToMarks(element));
-    const valueToStore =
-      prefix || suffix
-        ? fieldValue
-        : marked || fieldValue;
+    /*
+        Compare the marked form, not the plain text.
 
+        Bold, italic and underline change only the markup — `textContent` is
+        identical before and after. Comparing plain text therefore reported "no
+        change" for every formatting edit and returned here without saving, so
+        emphasis applied on screen and was gone on the next reload. It looked
+        like the editor worked and quietly discarded the work.
+
+        `weavrMarks` holds the stored form when the value has markers; when it
+        has none the plain original is already the marked form.
+    */
+    const marked = normalize(htmlToMarks(element));
+    const markedOriginal = element.dataset.weavrMarks ?? original;
+    if (marked === markedOriginal) return;
+
+    return send(element, fieldId, marked || newValue);
+  }
+
+  /** Puts an element back to its last saved state, markers and all. */
+  function restore(element) {
+    const marks = element.dataset.weavrMarks;
+    const original = element.dataset.weavrOriginal ?? "";
+    // innerHTML, not textContent: restoring a value that carries emphasis as
+    // flat text would drop the emphasis from the page while leaving it in the
+    // file, so the preview would stop matching what is stored.
+    if (marks) element.innerHTML = marksToHtml(marks);
+    else element.textContent = original;
+  }
+
+  /** Hands a new value to Weavr, and rolls back if it cannot be reached. */
+  function send(element, fieldId, valueToStore) {
     element.setAttribute("data-weavr-saving", "1");
     if (!emit("weavr://text-edited", { fieldIds: [fieldId], newValue: valueToStore })) {
       // Never leave an unsaved change looking saved.
       element.removeAttribute("data-weavr-saving");
       element.setAttribute("data-weavr-error", "1");
-      element.textContent = original;
+      restore(element);
       console.error("[weavr] edit not saved: the editor bridge is unavailable");
     }
   }
@@ -1031,7 +1058,7 @@
         .forEach((element) => {
           element.removeAttribute("data-weavr-saving");
           if (element.dataset.weavrOriginal !== undefined) {
-            element.textContent = element.dataset.weavrOriginal;
+            restore(element);
           }
         });
     },
