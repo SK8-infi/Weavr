@@ -9,10 +9,13 @@ use tauri::{AppHandle, Emitter, Listener, Manager};
 
 use crate::content::index::ContentIndex;
 use crate::layout;
+use crate::content::styles;
 use crate::content::writer;
 use crate::state::AppState;
 
 pub const TEXT_EDITED_EVENT: &str = "weavr://text-edited";
+/// A size or alignment changed on the preview.
+pub const STYLE_EDITED_EVENT: &str = "weavr://style-edited";
 /// The preview page announcing that its bridge is installed and wants values.
 pub const BRIDGE_READY_EVENT: &str = "weavr://bridge-ready";
 /// Sent to the panel when a write was refused.
@@ -32,6 +35,18 @@ struct TextEditedPayload {
     field_ids: Vec<String>,
     #[serde(rename = "newValue")]
     new_value: String,
+}
+
+/// A field's new size and alignment. Either may be absent, meaning "not set";
+/// both absent clears the field's style entirely.
+#[derive(Debug, Deserialize)]
+struct StyleEditedPayload {
+    #[serde(rename = "fieldId")]
+    field_id: String,
+    #[serde(default)]
+    size: Option<String>,
+    #[serde(default)]
+    align: Option<String>,
 }
 
 pub fn register(app: &AppHandle) {
@@ -57,6 +72,64 @@ pub fn register(app: &AppHandle) {
             report_result(&handle, &payload, result);
         });
     });
+
+    let style_handle = app.clone();
+    app.listen(STYLE_EDITED_EVENT, move |event| {
+        let Ok(payload) = serde_json::from_str::<StyleEditedPayload>(event.payload()) else {
+            return;
+        };
+        let handle = style_handle.clone();
+
+        tauri::async_runtime::spawn_blocking(move || {
+            let result = apply_style(&handle, &payload);
+            report_style_result(&handle, &payload, result);
+        });
+    });
+}
+
+fn apply_style(app: &AppHandle, payload: &StyleEditedPayload) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let mut project = state.project.lock().unwrap();
+    let session = project.as_mut().ok_or("no project is open")?;
+
+    // Checked against the index so a style can only be attached to a field
+    // that exists. Without this a stale preview could write entries for fields
+    // that were since renamed, and nothing would ever clean them up.
+    if session.index.find_by_id(&payload.field_id).is_none() {
+        return Err(format!("unknown field {}", payload.field_id));
+    }
+
+    styles::set(
+        &session.root,
+        &payload.field_id,
+        styles::FieldStyle {
+            size: payload.size.clone(),
+            align: payload.align.clone(),
+        },
+    )
+    .map_err(|e| e.to_string())?;
+
+    // Publish stages only what Weavr wrote, so the styles file has to be
+    // declared here or a restyle would never reach the repository.
+    session.edited_files.insert(styles::STYLES_FILE.to_string());
+    Ok(())
+}
+
+fn report_style_result(app: &AppHandle, payload: &StyleEditedPayload, result: Result<(), String>) {
+    match result {
+        Ok(()) => {
+            let _ = app.emit_to(
+                layout::PANEL_LABEL,
+                CONTENT_CHANGED_EVENT,
+                vec![payload.field_id.clone()],
+            );
+        }
+        Err(message) => {
+            // Nothing to roll back on the page — the site re-renders from the
+            // styles file, so a refused write simply leaves it as it was.
+            let _ = app.emit_to(layout::PANEL_LABEL, EDIT_FAILED_EVENT, message);
+        }
+    }
 }
 
 fn apply_edit(app: &AppHandle, field_ids: &[String], new_value: &str) -> Result<(), String> {
@@ -131,7 +204,7 @@ mod tests {
     /// sets disjoint.
     #[test]
     fn no_handler_emits_an_event_it_listens_for() {
-        let listened = [BRIDGE_READY_EVENT, TEXT_EDITED_EVENT];
+        let listened = [BRIDGE_READY_EVENT, TEXT_EDITED_EVENT, STYLE_EDITED_EVENT];
         let emitted = [CONTENT_CHANGED_EVENT, EDIT_FAILED_EVENT];
 
         for name in emitted {

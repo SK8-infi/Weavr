@@ -179,6 +179,29 @@
       }
       .weavr-tool:hover { background: rgba(255, 255, 255, 0.12); color: #faf7f2; }
       .weavr-tool[aria-pressed="true"] { background: #e8a317; color: #23180a; }
+      .weavr-tool[disabled] { opacity: 0.35; cursor: default; }
+      .weavr-tool[disabled]:hover { background: transparent; color: #ded8d1; }
+      .weavr-tool-sep {
+        width: 1px;
+        margin: 3px 3px;
+        background: rgba(255, 255, 255, 0.14);
+      }
+      .weavr-tool-readout {
+        min-width: 30px;
+        padding: 0 2px;
+        font: 500 10px/26px ui-sans-serif, system-ui, sans-serif;
+        color: #b5aca3;
+        text-align: center;
+        text-transform: lowercase;
+      }
+      /* One glyph, rotated per alignment, so the four read as a set. */
+      .weavr-tool-align-left,
+      .weavr-tool-align-center,
+      .weavr-tool-align-right,
+      .weavr-tool-align-justify { font-size: 13px; line-height: 1; }
+      .weavr-tool-align-left { text-align: left; letter-spacing: -1px; }
+      .weavr-tool-align-right { text-align: right; letter-spacing: -1px; }
+      .weavr-tool-align-justify { letter-spacing: 0; }
       .weavr-tool-b { font-weight: 800; }
       .weavr-tool-i { font-style: italic; }
       .weavr-tool-u { text-decoration: underline; }
@@ -529,6 +552,76 @@
     { command: "underline", mark: "__", label: "U", cls: "weavr-tool-u", title: "Underline" },
   ];
 
+  // ---------------------------------------------------------------------
+  // Size and alignment
+  //
+  // Emphasis marks a run of text, so it can live inside the string. These
+  // describe the whole field and have nowhere to go inside it, so they are
+  // stored separately and keyed by field id — see content/styles.rs.
+  //
+  // The steps and names must match that file: a value it does not know is
+  // refused, and one the site does not know renders no class at all.
+  // ---------------------------------------------------------------------
+
+  const SIZE_STEPS = ["sm", "base", "lg", "xl", "2xl"];
+  const DEFAULT_SIZE = "base";
+
+  const ALIGNMENTS = [
+    { value: "left", label: "≡", title: "Align left" },
+    { value: "center", label: "≡", title: "Centre" },
+    { value: "right", label: "≡", title: "Align right" },
+    { value: "justify", label: "≡", title: "Justify" },
+  ];
+
+  /** Field id -> { size, align }, pushed by Weavr with the values. */
+  let fieldStyles = {};
+
+  function styleOf(fieldId) {
+    return fieldStyles[fieldId] || {};
+  }
+
+  /**
+   * Shows a change straight away, before the file has been written and the dev
+   * server has reloaded.
+   *
+   * Inline, because the published styling arrives as a class from the site's
+   * own style file and the two must not fight: a reload drops these and the
+   * class takes over. Without it, every size change would sit unchanged on
+   * screen for as long as the round trip takes and read as a dead button.
+   */
+  const PREVIEW_SIZES = {
+    sm: "0.85em",
+    base: "",
+    lg: "1.15em",
+    xl: "1.35em",
+    "2xl": "1.6em",
+  };
+
+  function previewStyle(fieldId) {
+    const style = styleOf(fieldId);
+    for (const element of selectorFor(fieldId)) {
+      element.style.fontSize = PREVIEW_SIZES[style.size] ?? "";
+      element.style.textAlign = style.align || "";
+    }
+  }
+
+  /** Records the change locally, shows it, and asks Weavr to store it. */
+  function setFieldStyle(fieldId, next) {
+    const style = { ...styleOf(fieldId), ...next };
+    // An unset value is absent rather than empty, so it round-trips as the
+    // `None` the Rust side expects rather than as a size called "".
+    if (!style.size || style.size === DEFAULT_SIZE) delete style.size;
+    if (!style.align) delete style.align;
+
+    if (style.size || style.align) fieldStyles[fieldId] = style;
+    else delete fieldStyles[fieldId];
+
+    previewStyle(fieldId);
+    if (!emit("weavr://style-edited", { fieldId, size: style.size ?? null, align: style.align ?? null })) {
+      console.error("[weavr] style not saved: the editor bridge is unavailable");
+    }
+  }
+
   let toolbar = null;
 
   function closeToolbar() {
@@ -553,25 +646,80 @@
         button.setAttribute("aria-pressed", String(document.queryCommandState?.(command) === true));
       }
     }
+
+    const fieldId = toolbar.dataset.weavrFor;
+    if (!fieldId) return;
+    const style = styleOf(fieldId);
+
+    for (const button of toolbar.querySelectorAll("[data-weavr-align]")) {
+      const active = button.getAttribute("data-weavr-align") === style.align;
+      button.setAttribute("aria-pressed", String(active));
+    }
+
+    const readout = toolbar.querySelector("[data-weavr-size-readout]");
+    if (readout) readout.textContent = style.size || DEFAULT_SIZE;
+
+    // Nothing smaller than the smallest step, nothing larger than the largest.
+    const index = SIZE_STEPS.indexOf(style.size || DEFAULT_SIZE);
+    toolbar.querySelector('[data-weavr-size="-1"]')?.toggleAttribute("disabled", index <= 0);
+    toolbar.querySelector('[data-weavr-size="1"]')?.toggleAttribute(
+      "disabled",
+      index >= SIZE_STEPS.length - 1,
+    );
   }
 
   function openToolbar(element) {
     closeToolbar();
+    const fieldId = element.getAttribute(EDITABLE_ATTR);
+
     toolbar = document.createElement("div");
     toolbar.className = "weavr-toolbar";
     toolbar.setAttribute("data-weavr-ignore", "");
-    toolbar.innerHTML = MARKS.map(
+    toolbar.dataset.weavrFor = fieldId || "";
+
+    const marks = MARKS.map(
       (m) =>
         `<button class="weavr-tool ${m.cls}" data-weavr-mark="${m.command}" title="${m.title}" aria-pressed="false">${m.label}</button>`,
     ).join("");
 
+    // Size and alignment need a field id to attach to. Text that Weavr could
+    // not resolve to exactly one field has none, so it gets emphasis only
+    // rather than controls that would have nowhere to write.
+    const styleTools = fieldId
+      ? `<span class="weavr-tool-sep"></span>` +
+        `<button class="weavr-tool" data-weavr-size="-1" title="Smaller">A−</button>` +
+        `<span class="weavr-tool-readout" data-weavr-size-readout>${DEFAULT_SIZE}</span>` +
+        `<button class="weavr-tool" data-weavr-size="1" title="Larger">A+</button>` +
+        `<span class="weavr-tool-sep"></span>` +
+        ALIGNMENTS.map(
+          (a) =>
+            `<button class="weavr-tool weavr-tool-align-${a.value}" data-weavr-align="${a.value}" title="${a.title}" aria-pressed="false">${a.label}</button>`,
+        ).join("")
+      : "";
+
+    toolbar.innerHTML = marks + styleTools;
+
     // mousedown, not click: the default would blur the text being edited and
     // throw away the selection before the command could apply.
     toolbar.addEventListener("mousedown", (event) => {
-      const button = event.target.closest?.("[data-weavr-mark]");
-      if (!button) return;
+      const target = event.target.closest?.("button");
+      if (!target) return;
       event.preventDefault();
-      document.execCommand(button.getAttribute("data-weavr-mark"));
+
+      if (target.hasAttribute("data-weavr-mark")) {
+        document.execCommand(target.getAttribute("data-weavr-mark"));
+      } else if (target.hasAttribute("data-weavr-size") && fieldId) {
+        const step = Number(target.getAttribute("data-weavr-size"));
+        const current = SIZE_STEPS.indexOf(styleOf(fieldId).size || DEFAULT_SIZE);
+        const next = Math.min(SIZE_STEPS.length - 1, Math.max(0, current + step));
+        setFieldStyle(fieldId, { size: SIZE_STEPS[next] });
+      } else if (target.hasAttribute("data-weavr-align") && fieldId) {
+        const value = target.getAttribute("data-weavr-align");
+        // Clicking the active alignment clears it, so there is a way back to
+        // whatever the design already did.
+        setFieldStyle(fieldId, { align: styleOf(fieldId).align === value ? null : value });
+      }
+
       refreshToolbarState();
     });
 
@@ -1044,6 +1192,18 @@
             normalize(prefix + savedValue + suffix),
           );
         });
+    },
+
+    /**
+     * Receives the stored field styles.
+     *
+     * Sent with the values on every load, because a dev-server reload drops
+     * them the same way it drops everything else the bridge holds.
+     */
+    setStyles(map) {
+      fieldStyles = map && typeof map === "object" ? map : {};
+      for (const fieldId of Object.keys(fieldStyles)) previewStyle(fieldId);
+      refreshToolbarState();
     },
 
     /** True once Weavr has sent this page its editable values. */

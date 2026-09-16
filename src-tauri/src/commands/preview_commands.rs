@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
 use crate::error::{AppError, AppResult};
+use crate::content::styles;
 use crate::layout;
 use crate::nodejs::preview_server;
 use crate::state::AppState;
@@ -66,15 +67,25 @@ pub fn push_editable_values(app: &AppHandle) -> AppResult<()> {
     let payload = serde_json::to_string(&session.index.all_values())
         .map_err(|e| AppError::Other(format!("could not serialize editable values: {e}")))?;
 
+    // Sent together with the values, and for the same reason: a dev-server
+    // reload drops everything the bridge holds, so both have to arrive again.
+    // A styles file that cannot be read must not stop the page being editable,
+    // so it degrades to "no styles" here rather than failing the whole push.
+    let styles = styles::read(&session.root).unwrap_or_default();
+    let styles_payload = serde_json::to_string(&styles)
+        .map_err(|e| AppError::Other(format!("could not serialize field styles: {e}")))?;
+
     // The page may still be loading when this runs, so the bridge polls for
     // itself rather than assuming it is already installed.
     let script = format!(
         r#"(function(){{
              var payload = {payload};
+             var styles = {styles_payload};
              var tries = 0;
              (function apply(){{
                if (window.__weavrEditBridge) {{
                  window.__weavrEditBridge.setValues(payload);
+                 window.__weavrEditBridge.setStyles(styles);
                  window.__weavrEditBridge.setEnabled(true);
                  return;
                }}
