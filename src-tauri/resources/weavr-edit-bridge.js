@@ -23,6 +23,28 @@
   let rawByValue = new Map();
   /** Bounds how far up the tree a match is worth looking for. */
   let maxValueLength = 0;
+
+  /**
+   * The child nodes React rendered, kept while Weavr has an element open for
+   * editing.
+   *
+   * React holds direct references to these nodes in its fiber tree. Editing
+   * replaces them — re-hydrating markers into markup, and execCommand building
+   * its own tags — so the nodes React is still holding stop being in the
+   * document. The next time it reconciles that element it calls removeChild on
+   * a node that is no longer a child, which throws, and an uncaught error
+   * during commit unmounts the entire tree: the whole page goes blank.
+   *
+   * Putting the very same node objects back before React touches the element
+   * again is what prevents that. Fresh nodes with identical markup would not
+   * do: it is the identity React matches on, not the shape.
+   *
+   * Each entry is `{ nodes, text, held }`. Typing mutates a text node's data in
+   * place rather than replacing the node, so the nodes alone do not say what
+   * the field looked like before the edit — `text` records that separately, and
+   * is what a rollback puts back.
+   */
+  const reactNodes = new WeakMap();
   let enabled = false;
 
   const normalize = (text) => text.replace(/\s+/g, " ").trim();
@@ -903,6 +925,12 @@
 
   function onFocus(event) {
     const element = event.currentTarget;
+
+    // Taken before anything is changed, and unconditionally: plain typing
+    // alters the text nodes React rendered just as much as the re-hydration
+    // below replaces them.
+    takeFromReact(element);
+
     // Re-hydrate the stored markers into markup so the words appear the way
     // they will be published, and the toolbar can toggle them.
     const marks = element.dataset.weavrMarks;
@@ -935,10 +963,24 @@
     document.removeEventListener("selectionchange", refreshToolbarState);
     const element = event.currentTarget;
     const fieldId = element.getAttribute(EDITABLE_ATTR);
-    const newValue = normalize(element.textContent || "");
     const original = element.dataset.weavrOriginal;
 
-    if (original === undefined) return;
+    /*
+        Read the edit out of the DOM first, because every path below then hands
+        the element back to React — and must, before React next renders it. It
+        is holding direct references to the nodes it created here; finding them
+        gone is what threw `removeChild` and took the whole page down.
+
+        `restore` hands back and rolls the text back with it; `handBack` leaves
+        the edit on screen for the write that is about to be sent.
+    */
+    const newValue = normalize(element.textContent || "");
+    const marked = normalize(htmlToMarks(element));
+
+    if (original === undefined) {
+      restore(element);
+      return;
+    }
     if (!newValue) {
       // Refuse to blank a field by accident; restore and let the user use the
       // side panel if they really mean to clear it.
@@ -955,7 +997,10 @@
     if (prefix || suffix) {
       // Emphasis is not offered on these: only the field's share is stored, and
       // a marker spanning the literal part would have nowhere to go.
-      if (newValue === original) return;
+      if (newValue === original) {
+        restore(element);
+        return;
+      }
       const fits =
         newValue.startsWith(prefix) &&
         newValue.endsWith(suffix) &&
@@ -964,6 +1009,7 @@
         restore(element);
         return;
       }
+      handBack(element, newValue);
       return send(element, fieldId, newValue.slice(prefix.length, newValue.length - suffix.length));
     }
 
@@ -979,22 +1025,99 @@
         `weavrMarks` holds the stored form when the value has markers; when it
         has none the plain original is already the marked form.
     */
-    const marked = normalize(htmlToMarks(element));
     const markedOriginal = element.dataset.weavrMarks ?? original;
-    if (marked === markedOriginal) return;
+    if (marked === markedOriginal) {
+      restore(element);
+      return;
+    }
 
+    handBack(element, newValue);
     return send(element, fieldId, marked || newValue);
+  }
+
+  /**
+   * Takes custody of what React rendered, before the editor changes any of it.
+   *
+   * Re-taken after a hand-back even though the entry is still there: by then
+   * the element may have been re-rendered from the saved file, and the nodes
+   * recorded here would be ones React has already discarded.
+   */
+  function takeFromReact(element) {
+    const held = reactNodes.get(element);
+    if (held && held.held) return;
+
+    const nodes = Array.from(element.childNodes);
+    const text = [];
+    (function walk(list) {
+      for (const node of list) {
+        if (node.nodeType === Node.TEXT_NODE) text.push({ node, data: node.data });
+        else walk(node.childNodes);
+      }
+    })(nodes);
+
+    reactNodes.set(element, { nodes, text, held: true });
+  }
+
+  function revertText(record) {
+    for (const { node, data } of record.text) {
+      if (node.data !== data) node.data = data;
+    }
+  }
+
+  /**
+   * Writes text into nodes React already owns, without changing the structure.
+   *
+   * Only a node's data changes, which React overwrites on its next render and
+   * never trips over — unlike adding or removing nodes, which is what crashed
+   * it. The first text node takes the whole string and the rest are emptied,
+   * so an edit that dropped emphasis shows unemphasised for the moment before
+   * the file write comes back rather than showing the old words.
+   */
+  function showText(record, value) {
+    const [first, ...rest] = record.text;
+    if (!first) return;
+    if (first.node.data !== value) first.node.data = value;
+    for (const { node } of rest) {
+      if (node.data !== "") node.data = "";
+    }
+  }
+
+  /**
+   * Hands an element back to React, with the nodes it rendered.
+   *
+   * `keep` is the text to leave on screen: the edit that is on its way to disk,
+   * so an accepted change does not flicker back to the old wording while the
+   * write and the reload that follows it are in flight. Omit it to roll back
+   * instead — those nodes were rendering the last saved value, so the field
+   * shows it again, emphasis included and without building markup React would
+   * not recognise.
+   *
+   * A rollback ends the custody. Keeping an edit does not: the structure is
+   * React's again but the text is not what is stored, so a write that turns out
+   * to be refused still has to be able to put the stored text back.
+   */
+  function releaseToReact(element, keep) {
+    const record = reactNodes.get(element);
+    if (!record) return false;
+
+    if (keep === undefined) revertText(record);
+    if (record.held) {
+      record.held = false;
+      element.replaceChildren(...record.nodes);
+    }
+    if (keep === undefined) reactNodes.delete(element);
+    else showText(record, keep);
+    return true;
   }
 
   /** Puts an element back to its last saved state, markers and all. */
   function restore(element) {
-    const marks = element.dataset.weavrMarks;
-    const original = element.dataset.weavrOriginal ?? "";
-    // innerHTML, not textContent: restoring a value that carries emphasis as
-    // flat text would drop the emphasis from the page while leaving it in the
-    // file, so the preview would stop matching what is stored.
-    if (marks) element.innerHTML = marksToHtml(marks);
-    else element.textContent = original;
+    releaseToReact(element);
+  }
+
+  /** Gives the nodes back but leaves the edited text on screen. */
+  function handBack(element, shownText) {
+    releaseToReact(element, shownText);
   }
 
   /** Hands a new value to Weavr, and rolls back if it cannot be reached. */
@@ -1164,6 +1287,9 @@
         clearBypassKey();
         observer.disconnect();
         document.querySelectorAll(`[${EDITABLE_ATTR}]`).forEach((element) => {
+          // Editing can be switched off with a field still focused, which would
+          // otherwise leave React's nodes in the bridge's custody for good.
+          restore(element);
           element.removeAttribute(EDITABLE_ATTR);
           element.removeAttribute("contenteditable");
           // Drop the saved-value baseline too, so re-enabling re-reads it
@@ -1184,6 +1310,9 @@
       selectorFor(fieldIds)
         .forEach((element) => {
           element.removeAttribute("data-weavr-saving");
+          // The write landed, so the text kept for rolling it back is no longer
+          // wanted — and holding stale nodes past a re-render helps nobody.
+          reactNodes.delete(element);
           element.dataset.weavrMarks = savedValue;
           // Re-attach the literal parts so the baseline matches what's shown.
           const prefix = element.dataset.weavrPrefix || "";
