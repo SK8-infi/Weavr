@@ -97,6 +97,92 @@ pub fn duplicate_item(
     )
 }
 
+/// Adds a new entry written from scratch, at `index` — `0` for the top of the
+/// list, `len` for the end.
+///
+/// The companion to `duplicate_item`, and needed because copying can only ever
+/// produce more of what a page already has. Adding a section a page does not
+/// yet contain, or the first section to a page that has none, has nothing to
+/// copy from.
+///
+/// The literal is JavaScript source rather than a value Weavr builds, so the
+/// caller decides the shape and this stays indifferent to what is being added
+/// — a section, a page, a committee member. What it is not is a licence to
+/// write anything: `commit` re-parses the file afterwards and refuses to save
+/// a result that no longer reads back as a list of the expected length, so a
+/// malformed literal is rejected rather than left in the site.
+pub fn insert_item(
+    project_root: &Path,
+    relative_file: &str,
+    export_name: &str,
+    array_path: &str,
+    index: usize,
+    literal: &str,
+) -> AppResult<()> {
+    let source = read(project_root, relative_file)?;
+    let array = parser::locate_array(relative_file, &source, export_name, array_path)?;
+
+    if index > array.elements.len() {
+        return Err(AppError::Other(format!(
+            "cannot add at position {} to a list of {} entries",
+            index + 1,
+            array.elements.len()
+        )));
+    }
+
+    let mut updated = String::with_capacity(source.len() + literal.len() + 8);
+
+    match array.elements.get(index) {
+        // Going in ahead of an existing entry: match that entry's indentation
+        // and push it down.
+        Some(&(start, _)) => {
+            let indent = indent_before(&source, start);
+            updated.push_str(&source[..start]);
+            updated.push_str(literal);
+            updated.push(',');
+            if indent.is_empty() {
+                updated.push(' ');
+            } else {
+                updated.push('\n');
+                updated.push_str(&indent);
+            }
+            updated.push_str(&source[start..]);
+        }
+        // Going on the end, after the last entry.
+        None => match array.elements.last() {
+            Some(&(start, end)) => {
+                let indent = indent_before(&source, start);
+                updated.push_str(&source[..end]);
+                updated.push(',');
+                if indent.is_empty() {
+                    updated.push(' ');
+                } else {
+                    updated.push('\n');
+                    updated.push_str(&indent);
+                }
+                updated.push_str(literal);
+                updated.push_str(&source[end..]);
+            }
+            // An empty list has no entry to line up with, so the brackets are
+            // all there is to go on.
+            None => {
+                updated.push_str(&source[..array.open]);
+                updated.push_str(literal);
+                updated.push_str(&source[array.close..]);
+            }
+        },
+    }
+
+    commit(
+        project_root,
+        relative_file,
+        export_name,
+        array_path,
+        updated,
+        array.elements.len() + 1,
+    )
+}
+
 pub fn remove_item(
     project_root: &Path,
     relative_file: &str,
@@ -254,6 +340,66 @@ mod tests {
         assert_eq!(found.len(), 4);
         assert_eq!(found[1], found[2], "the copy should match its original");
         assert!(found[2].contains("about"));
+    }
+
+    #[test]
+    fn inserts_a_new_entry_at_the_top() {
+        let (_g, root) = scratch(SECTIONS);
+        insert_item(&root, "src/data/t.js", "page", "sections", 0, "{ sectionId: 'faqs', props: {} }")
+            .unwrap();
+
+        let found = items(&root, "page", "sections");
+        assert_eq!(found.len(), 4);
+        assert!(found[0].contains("faqs"));
+        assert!(found[1].contains("hero"), "the old first entry should follow it");
+    }
+
+    #[test]
+    fn inserts_a_new_entry_in_the_middle_and_at_the_end() {
+        let (_g, root) = scratch(SECTIONS);
+        insert_item(&root, "src/data/t.js", "page", "sections", 1, "{ sectionId: 'faqs', props: {} }")
+            .unwrap();
+        insert_item(&root, "src/data/t.js", "page", "sections", 4, "{ sectionId: 'contact', props: {} }")
+            .unwrap();
+
+        let found = items(&root, "page", "sections");
+        assert_eq!(found.len(), 5);
+        assert!(found[0].contains("hero"));
+        assert!(found[1].contains("faqs"));
+        assert!(found[4].contains("contact"));
+    }
+
+    #[test]
+    fn inserts_the_first_entry_into_an_empty_list() {
+        // A page created from nothing starts with no sections at all, so there
+        // is no neighbouring entry to line up against.
+        let (_g, root) = scratch("export const page = {\n    sections: []\n};\n");
+        insert_item(&root, "src/data/t.js", "page", "sections", 0, "{ sectionId: 'hero', props: {} }")
+            .unwrap();
+
+        let found = items(&root, "page", "sections");
+        assert_eq!(found.len(), 1);
+        assert!(found[0].contains("hero"));
+    }
+
+    #[test]
+    fn a_literal_that_would_break_the_file_is_refused() {
+        // The literal is JavaScript source, so a bad one could leave the site
+        // unparseable — and a site that will not build cannot be repaired from
+        // the editor that broke it.
+        let (_g, root) = scratch(SECTIONS);
+        let before = read_back(&root);
+
+        assert!(
+            insert_item(&root, "src/data/t.js", "page", "sections", 1, "{ sectionId: 'oops'").is_err()
+        );
+        assert_eq!(read_back(&root), before, "the file was modified anyway");
+    }
+
+    #[test]
+    fn inserting_beyond_the_end_is_refused() {
+        let (_g, root) = scratch(SECTIONS);
+        assert!(insert_item(&root, "src/data/t.js", "page", "sections", 9, "{}").is_err());
     }
 
     #[test]

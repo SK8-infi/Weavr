@@ -165,6 +165,14 @@ pub fn parse_project(project_root: &Path) -> AppResult<Vec<LeafRecord>> {
 pub struct ArrayLocation {
     /// Byte range of each element, in source order.
     pub elements: Vec<(usize, usize)>,
+    /// Byte just after the opening `[`, and the byte the closing `]` starts at.
+    ///
+    /// Needed to add the first entry to a list that has none: with no element
+    /// to sit next to, the brackets are the only thing to position against. A
+    /// new page starts out with an empty `sections` list, so this is the
+    /// ordinary case rather than a corner of one.
+    pub open: usize,
+    pub close: usize,
 }
 
 pub fn locate_array(
@@ -293,7 +301,11 @@ fn array_location(node: &Node) -> AppResult<ArrayLocation> {
         .map(|child| (child.start_byte(), child.end_byte()))
         .collect();
 
-    Ok(ArrayLocation { elements })
+    Ok(ArrayLocation {
+        elements,
+        open: node.start_byte() + 1,
+        close: node.end_byte().saturating_sub(1),
+    })
 }
 
 fn collect_leaves(
