@@ -773,9 +773,22 @@
           mark = "__";
         }
 
-        // Nesting the same mark twice would produce `****`, which reads as an
-        // empty pair rather than emphasis.
-        if (mark && !open.includes(mark)) {
+        /*
+            An element with no text of its own must not get markers.
+
+            Clicking Bold with nothing selected leaves an empty <strong> at the
+            caret, which serialised to `****`. The site renders that literally —
+            its pattern needs something between the markers — so the words on
+            the page stopped matching the stored value, and matching is how this
+            bridge decides what is editable. The paragraph could then only be
+            repaired by hand.
+
+            Nesting the same mark twice is refused for the same reason: it would
+            also produce an empty pair.
+        */
+        const hasText = (child.textContent || "").trim() !== "";
+
+        if (mark && hasText && !open.includes(mark)) {
           out += mark;
           walk(child, [...open, mark]);
           out += mark;

@@ -174,6 +174,27 @@ test("unbolding is saved, not silently dropped", async () => {
   assert.equal(edit.payload.newValue, "Hello bold world");
 });
 
+test("bolding nothing does not write an empty pair of markers", async () => {
+  // Clicking Bold with the caret parked at the end leaves an empty <strong>
+  // behind. Serialising that as `****` put a stray pair into the content file:
+  // the site renders it literally, the rendered words stop matching the stored
+  // value, and matching is what makes a field editable — so the paragraph could
+  // then only be repaired by hand.
+  const env = await setup();
+  const { element } = await editableParagraph(env, { text: "Hello world" });
+
+  focus(env.window, element);
+  element.innerHTML = "Hello world<strong></strong>";
+  blur(env.window, element);
+
+  const edits = env.emitted.filter((e) => e.name === "weavr://text-edited");
+  assert.deepEqual(
+    edits.map((e) => e.payload.newValue),
+    [],
+    "an empty emphasis pair was saved as a change",
+  );
+});
+
 test("an edit is still on screen while it is being written", async () => {
   // Handing React's nodes back must not undo the edit: the write and the
   // reload it triggers take a moment, and the field flicking back to the old
