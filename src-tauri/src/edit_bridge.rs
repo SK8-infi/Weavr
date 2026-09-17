@@ -20,6 +20,8 @@ pub const TEXT_EDITED_EVENT: &str = "weavr://text-edited";
 pub const SECTION_OP_EVENT: &str = "weavr://section-op";
 /// A section was chosen from the catalogue to go in at a given point.
 pub const SECTION_ADD_EVENT: &str = "weavr://section-add";
+/// A section's background, spacing or alignment changed.
+pub const SECTION_APPEARANCE_EVENT: &str = "weavr://section-appearance";
 /// A size or alignment changed on the preview.
 pub const STYLE_EDITED_EVENT: &str = "weavr://style-edited";
 /// The preview page announcing that its bridge is installed and wants values.
@@ -63,6 +65,21 @@ struct SectionOpPayload {
     page_id: String,
     index: usize,
     op: String,
+}
+
+/// A section's presentation. Any field absent means "not set"; all absent
+/// clears the section's appearance entirely.
+#[derive(Debug, Deserialize)]
+struct SectionAppearancePayload {
+    #[serde(rename = "pageId")]
+    page_id: String,
+    index: usize,
+    #[serde(default)]
+    background: Option<String>,
+    #[serde(default)]
+    spacing: Option<String>,
+    #[serde(default)]
+    align: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -124,6 +141,19 @@ pub fn register(app: &AppHandle) {
         });
     });
 
+    let appearance_handle = app.clone();
+    app.listen(SECTION_APPEARANCE_EVENT, move |event| {
+        let Ok(payload) = serde_json::from_str::<SectionAppearancePayload>(event.payload()) else {
+            return;
+        };
+        let handle = appearance_handle.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            if let Err(message) = apply_section_appearance(&handle, &payload) {
+                let _ = handle.emit_to(layout::PANEL_LABEL, EDIT_FAILED_EVENT, message);
+            }
+        });
+    });
+
     let style_handle = app.clone();
     app.listen(STYLE_EDITED_EVENT, move |event| {
         let Ok(payload) = serde_json::from_str::<StyleEditedPayload>(event.payload()) else {
@@ -136,6 +166,50 @@ pub fn register(app: &AppHandle) {
             report_style_result(&handle, &payload, result);
         });
     });
+}
+
+/// Sets how a section is presented.
+///
+/// Written into the section's own entry rather than a file alongside, so that
+/// reordering — which moves the entry's text as a unit — carries the setting
+/// with the section instead of leaving it pointing at whatever took its place.
+fn apply_section_appearance(
+    app: &AppHandle,
+    payload: &SectionAppearancePayload,
+) -> Result<(), String> {
+    let appearance = pages::Appearance {
+        background: payload.background.clone(),
+        spacing: payload.spacing.clone(),
+        align: payload.align.clone(),
+    };
+    appearance.validate().map_err(|e| e.to_string())?;
+
+    let state = app.state::<AppState>();
+    let (root, path) = {
+        let project = state.project.lock().unwrap();
+        let session = project.as_ref().ok_or("no project is open")?;
+        let page = pages::find(&session.index, &payload.page_id).map_err(|e| e.to_string())?;
+        let section = page
+            .sections
+            .get(payload.index)
+            .ok_or("that section is no longer on this page")?;
+        (session.root.clone(), section.props_path(&page))
+    };
+
+    let literal = appearance.literal();
+    structure::set_field(
+        &root,
+        pages::REGISTRY_FILE,
+        pages::PAGES_EXPORT,
+        &path,
+        pages::APPEARANCE_KEY,
+        // Nothing set means no key at all, so a section left alone keeps the
+        // registry exactly as its author wrote it.
+        if appearance.is_empty() { None } else { Some(&literal) },
+    )
+    .map_err(|e| e.to_string())?;
+
+    finish_structural_edit(app)
 }
 
 /// Turns a press in the preview into an edit of the page registry.
@@ -360,6 +434,7 @@ mod tests {
             STYLE_EDITED_EVENT,
             SECTION_OP_EVENT,
             SECTION_ADD_EVENT,
+            SECTION_APPEARANCE_EVENT,
         ];
         let emitted = [CONTENT_CHANGED_EVENT, EDIT_FAILED_EVENT];
 

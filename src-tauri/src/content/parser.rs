@@ -175,6 +175,132 @@ pub struct ArrayLocation {
     pub close: usize,
 }
 
+/// Whether the source has anything in it the grammar could not make sense of.
+///
+/// tree-sitter recovers from broken input rather than refusing it: an unclosed
+/// brace still yields a tree, with the damage marked rather than reported. So
+/// "it parsed" is not the same as "it is valid", and a check that only looks
+/// for the value it just wrote will happily find it inside a file that no
+/// longer compiles.
+///
+/// Callers compare before and after rather than demanding a clean file: a data
+/// file that already has something unusual in it must still be editable, and
+/// the question worth asking is only whether this edit made it worse.
+pub fn has_syntax_error(source: &str) -> AppResult<bool> {
+    let mut parser = js_parser()?;
+    let tree = parser
+        .parse(source, None)
+        .ok_or_else(|| AppError::Other("could not parse the file".into()))?;
+    Ok(tree.root_node().has_error())
+}
+
+/// One object in a data file, and where each of its keys' values sit.
+///
+/// The counterpart to `ArrayLocation`. Rearranging happens on arrays; setting
+/// a property happens on objects, and both work by moving bytes rather than by
+/// understanding what is being moved.
+#[derive(Debug, Clone)]
+pub struct ObjectLocation {
+    /// Key, and the byte range of the value it is set to.
+    pub fields: Vec<(String, (usize, usize))>,
+    /// Byte just after the opening `{`, and the byte the closing `}` starts at.
+    pub open: usize,
+    pub close: usize,
+}
+
+impl ObjectLocation {
+    pub fn value_of(&self, key: &str) -> Option<(usize, usize)> {
+        self.fields
+            .iter()
+            .find(|(name, _)| name == key)
+            .map(|(_, span)| *span)
+    }
+}
+
+pub fn locate_object(
+    relative_path: &str,
+    source: &str,
+    export_name: &str,
+    object_path: &str,
+) -> AppResult<ObjectLocation> {
+    // Everything wanted from the tree is taken while it is still alive: byte
+    // offsets into the caller's own source, which outlive the parse.
+    let mut parser = js_parser()?;
+    let tree = parser
+        .parse(source, None)
+        .ok_or_else(|| AppError::Other(format!("could not parse {relative_path}")))?;
+
+    let root = tree.root_node();
+    let mut cursor = root.walk();
+
+    for child in root.named_children(&mut cursor) {
+        let Some(declaration) = (match child.kind() {
+            "export_statement" => child.child_by_field_name("declaration"),
+            _ => None,
+        }) else {
+            continue;
+        };
+
+        let mut decl_cursor = declaration.walk();
+        for declarator in declaration.named_children(&mut decl_cursor) {
+            if declarator.kind() != "variable_declarator" {
+                continue;
+            }
+            let (Some(name_node), Some(value_node)) = (
+                declarator.child_by_field_name("name"),
+                declarator.child_by_field_name("value"),
+            ) else {
+                continue;
+            };
+            if node_text(&name_node, source) != export_name {
+                continue;
+            }
+            let Some(node) = descend_to(&value_node, object_path, source) else {
+                continue;
+            };
+            if node.kind() != "object" {
+                return Err(AppError::Other(format!(
+                    "expected a set of properties but found {}",
+                    node.kind()
+                )));
+            }
+            return Ok(object_location(&node, source));
+        }
+    }
+
+    Err(AppError::Other(format!(
+        "{relative_path} has no {export_name}{}{object_path}",
+        if object_path.is_empty() { "" } else { "." }
+    )))
+}
+
+fn object_location(node: &Node, source: &str) -> ObjectLocation {
+    let mut cursor = node.walk();
+    let mut fields = Vec::new();
+
+    for pair in node.named_children(&mut cursor) {
+        if pair.kind() != "pair" {
+            continue;
+        }
+        let (Some(key), Some(value)) = (
+            pair.child_by_field_name("key"),
+            pair.child_by_field_name("value"),
+        ) else {
+            continue;
+        };
+        fields.push((
+            property_key_name(&key, source).to_string(),
+            (value.start_byte(), value.end_byte()),
+        ));
+    }
+
+    ObjectLocation {
+        fields,
+        open: node.start_byte() + 1,
+        close: node.end_byte().saturating_sub(1),
+    }
+}
+
 pub fn locate_array(
     relative_path: &str,
     source: &str,
@@ -518,6 +644,16 @@ fn node_text<'a>(node: &Node, source: &'a str) -> &'a str {
 /// Classifies a leaf by its final field name — `sections[0].sectionId` is
 /// wiring, `sections[0].title` is copy.
 fn is_structural_path(path: &str) -> bool {
+    // Everything under an `appearance` is a setting, whatever it is called.
+    // These are words like "dark" and "center" chosen from a fixed list, and
+    // indexing them as copy would let a heading that happens to read "Center"
+    // resolve to a section's alignment.
+    if path.split('.').any(|segment| {
+        segment.split('[').next().unwrap_or(segment) == APPEARANCE_KEY
+    }) {
+        return true;
+    }
+
     let last_field = path
         .rsplit('.')
         .next()
@@ -526,6 +662,12 @@ fn is_structural_path(path: &str) -> bool {
 
     STRUCTURAL_FIELDS.contains(&last_field)
 }
+
+/// The reserved property a section's appearance is stored under.
+///
+/// Declared here as well as used by the page module, because the indexing has
+/// to recognise it to keep its values out of the editable copy.
+pub const APPEARANCE_KEY: &str = "appearance";
 
 #[cfg(test)]
 mod tests {

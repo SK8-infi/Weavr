@@ -21,6 +21,20 @@ fn read(project_root: &Path, relative_file: &str) -> AppResult<String> {
         .map_err(|e| AppError::Other(format!("could not read {relative_file}: {e}")))
 }
 
+/// Refuses an edit that leaves the file less valid than it found it.
+///
+/// Not "the result must be clean": a data file may already contain something
+/// the grammar is unhappy with, and it still has to be editable. The only
+/// question is whether this change introduced the problem.
+fn guard_syntax(relative_file: &str, before: &str, after: &str) -> AppResult<()> {
+    if parser::has_syntax_error(after)? && !parser::has_syntax_error(before)? {
+        return Err(AppError::Other(format!(
+            "refusing to write {relative_file}: the change would leave it unparseable"
+        )));
+    }
+    Ok(())
+}
+
 /// Writes only after confirming the result still parses and has the expected
 /// number of entries — a botched splice here would break the whole site.
 fn commit(
@@ -40,6 +54,12 @@ fn commit(
             check.elements.len()
         )));
     }
+
+    // Counting the entries is not enough on its own. tree-sitter recovers from
+    // broken input rather than rejecting it, so an entry can be both present
+    // and malformed — the count comes out right and the site will not build.
+    let before = read(project_root, relative_file)?;
+    guard_syntax(relative_file, &before, &updated)?;
 
     std::fs::write(project_root.join(relative_file), updated)
         .map_err(|e| AppError::Other(format!("could not write {relative_file}: {e}")))
@@ -181,6 +201,101 @@ pub fn insert_item(
         updated,
         array.elements.len() + 1,
     )
+}
+
+/// Sets one property on an object, replacing it or adding it.
+///
+/// Where the list operations rearrange whole entries, this reaches inside one.
+/// It is what lets a section's appearance live in the section's own entry
+/// rather than in a file alongside — which matters because reordering moves
+/// the entry's text as a unit, so the appearance travels with the section it
+/// belongs to and can never come adrift of it.
+///
+/// Passing `None` removes the property, so "no setting" is the absence of a
+/// key rather than a value meaning nothing.
+pub fn set_field(
+    project_root: &Path,
+    relative_file: &str,
+    export_name: &str,
+    object_path: &str,
+    key: &str,
+    literal: Option<&str>,
+) -> AppResult<()> {
+    let source = read(project_root, relative_file)?;
+    let object = parser::locate_object(relative_file, &source, export_name, object_path)?;
+
+    let mut updated = String::with_capacity(source.len() + 64);
+
+    match (object.value_of(key), literal) {
+        // Already set: swap just the value, leaving the key and the layout
+        // around it exactly as they were.
+        (Some((start, end)), Some(literal)) => {
+            updated.push_str(&source[..start]);
+            updated.push_str(literal);
+            updated.push_str(&source[end..]);
+        }
+        // Not set yet: add it at the front, where it is next to the key that
+        // identifies the entry rather than lost after a long line of content.
+        (None, Some(literal)) => {
+            let spaced = source[object.open..object.close].trim().is_empty();
+            updated.push_str(&source[..object.open]);
+            updated.push(' ');
+            updated.push_str(key);
+            updated.push_str(": ");
+            updated.push_str(literal);
+            if !spaced {
+                updated.push(',');
+            } else {
+                updated.push(' ');
+            }
+            updated.push_str(&source[object.open..]);
+        }
+        (Some((start, end)), None) => {
+            // Take the key and one separating comma with it, or the file is
+            // left with a comma that leads nowhere.
+            let key_start = source[..start]
+                .rfind(key)
+                .ok_or_else(|| AppError::Other(format!("could not find '{key}' to clear")))?;
+            let mut cut_start = key_start;
+            let mut cut_end = end;
+
+            let after = source[end..]
+                .char_indices()
+                .find(|(_, c)| !c.is_whitespace())
+                .map(|(offset, c)| (end + offset, c));
+            if let Some((comma_at, ',')) = after {
+                cut_end = comma_at + 1;
+            } else if let Some(comma_at) = source[..key_start].rfind(',') {
+                if source[comma_at + 1..key_start].trim().is_empty() {
+                    cut_start = comma_at;
+                }
+            }
+
+            updated.push_str(&source[..cut_start]);
+            updated.push_str(&source[cut_end..]);
+        }
+        (None, None) => return Ok(()),
+    }
+
+    // Read back before saving. The literal is JavaScript source from the
+    // caller, and a site that will not parse cannot be repaired from the
+    // editor that broke it.
+    let check = parser::locate_object(relative_file, &updated, export_name, object_path)
+        .map_err(|e| AppError::Other(format!("refusing to write {relative_file}: {e}")))?;
+
+    match (check.value_of(key), literal) {
+        (Some((start, end)), Some(literal)) if updated[start..end] == *literal => {}
+        (None, None) => {}
+        _ => {
+            return Err(AppError::Other(format!(
+                "refusing to write {relative_file}: '{key}' did not come back as it was set"
+            )))
+        }
+    }
+    guard_syntax(relative_file, &source, &updated)?;
+
+    std::fs::write(project_root.join(relative_file), updated)
+        .map_err(|e| AppError::Other(format!("could not write {relative_file}: {e}")))
 }
 
 pub fn remove_item(
@@ -400,6 +515,91 @@ mod tests {
     fn inserting_beyond_the_end_is_refused() {
         let (_g, root) = scratch(SECTIONS);
         assert!(insert_item(&root, "src/data/t.js", "page", "sections", 9, "{}").is_err());
+    }
+
+    fn field(root: &std::path::Path, path: &str, key: &str) -> Option<String> {
+        let source = read_back(root);
+        parser::locate_object("src/data/t.js", &source, "page", path)
+            .ok()?
+            .value_of(key)
+            .map(|(s, e)| source[s..e].to_string())
+    }
+
+    #[test]
+    fn sets_a_property_that_was_not_there() {
+        let (_g, root) = scratch(SECTIONS);
+        set_field(&root, "src/data/t.js", "page", "sections[1].props", "appearance",
+                  Some("{ background: 'dark' }")).unwrap();
+
+        assert_eq!(field(&root, "sections[1].props", "appearance").as_deref(),
+                   Some("{ background: 'dark' }"));
+        // The entry it belongs to is otherwise untouched.
+        let found = items(&root, "page", "sections");
+        assert_eq!(found.len(), 3);
+        assert!(found[1].contains("about"));
+        assert!(!found[0].contains("appearance"), "it leaked onto another entry");
+    }
+
+    #[test]
+    fn replaces_a_property_that_was_already_set() {
+        let (_g, root) = scratch(SECTIONS);
+        let at = "sections[0].props";
+        set_field(&root, "src/data/t.js", "page", at, "appearance", Some("{ background: 'dark' }")).unwrap();
+        set_field(&root, "src/data/t.js", "page", at, "appearance", Some("{ background: 'light' }")).unwrap();
+
+        assert_eq!(field(&root, at, "appearance").as_deref(), Some("{ background: 'light' }"));
+        assert_eq!(read_back(&root).matches("appearance").count(), 1, "it was added twice");
+    }
+
+    #[test]
+    fn clearing_a_property_removes_the_key_rather_than_emptying_it() {
+        // A key set to nothing still reads as "this has a setting", and the
+        // site would apply it. Absent is the only honest way to say "unset".
+        let (_g, root) = scratch(SECTIONS);
+        let at = "sections[2].props";
+        set_field(&root, "src/data/t.js", "page", at, "appearance", Some("{ background: 'dark' }")).unwrap();
+        set_field(&root, "src/data/t.js", "page", at, "appearance", None).unwrap();
+
+        assert_eq!(field(&root, at, "appearance"), None);
+        assert!(!read_back(&root).contains("appearance"));
+        assert_eq!(items(&root, "page", "sections").len(), 3);
+    }
+
+    #[test]
+    fn a_property_set_beside_an_existing_one_keeps_both() {
+        let (_g, root) = scratch(
+            "export const page = {\n    sections: [\n        { sectionId: 'hero', props: { title: 'Welcome' } }\n    ]\n};\n",
+        );
+        let at = "sections[0].props";
+        set_field(&root, "src/data/t.js", "page", at, "appearance", Some("{ background: 'dark' }")).unwrap();
+
+        assert_eq!(field(&root, at, "title").as_deref(), Some("'Welcome'"));
+        assert_eq!(field(&root, at, "appearance").as_deref(), Some("{ background: 'dark' }"));
+    }
+
+    #[test]
+    fn a_property_that_would_break_the_file_is_refused() {
+        let (_g, root) = scratch(SECTIONS);
+        let before = read_back(&root);
+        assert!(set_field(&root, "src/data/t.js", "page", "sections[0].props", "appearance",
+                          Some("{ background: 'dark'")).is_err());
+        assert_eq!(read_back(&root), before, "the file was modified anyway");
+    }
+
+    #[test]
+    fn an_appearance_travels_with_its_section_when_it_moves() {
+        // The whole reason this lives in the entry rather than in a file
+        // alongside: reordering moves the entry's text as a unit, so nothing
+        // has to be kept in step with a position that just changed.
+        let (_g, root) = scratch(SECTIONS);
+        set_field(&root, "src/data/t.js", "page", "sections[2].props", "appearance",
+                  Some("{ background: 'dark' }")).unwrap();
+        move_item(&root, "src/data/t.js", "page", "sections", 2, 0).unwrap();
+
+        assert_eq!(field(&root, "sections[0].props", "appearance").as_deref(),
+                   Some("{ background: 'dark' }"));
+        assert!(items(&root, "page", "sections")[0].contains("tracks"));
+        assert_eq!(field(&root, "sections[2].props", "appearance"), None);
     }
 
     #[test]

@@ -338,6 +338,19 @@
         scrollbar-width: thin;
       }
       .weavr-catalogue-item { flex: none; text-align: left; }
+      .weavr-tool-select {
+        height: 26px;
+        max-width: 92px;
+        border: 0;
+        border-radius: 7px;
+        padding: 0 4px;
+        background: rgba(255, 255, 255, 0.08);
+        color: #ded8d1;
+        font: 500 11px/1 ui-sans-serif, system-ui, sans-serif;
+        cursor: pointer;
+      }
+      .weavr-tool-select:hover { background: rgba(255, 255, 255, 0.16); color: #faf7f2; }
+      .weavr-tool-select option { background: #1c1917; color: #ded8d1; }
       body.weavr-layout [${EDITABLE_ATTR}] {
         outline: none !important;
         background-color: transparent !important;
@@ -1500,6 +1513,47 @@
     { op: "remove", label: "✕", title: "Remove", danger: true },
   ];
 
+  /*
+      How a section can be presented.
+
+      Each list has to match what the site can actually render — these become
+      class names it was built with, and one outside the set would be written
+      to the file and then do nothing at all. Rust holds the same lists and
+      refuses anything else, and a test compares the two so they cannot drift.
+
+      The first entry of each is the unset state, so a section with no
+      appearance set reads as "default" rather than as having no answer.
+  */
+  const APPEARANCE = [
+    {
+      key: "background",
+      title: "Background",
+      options: [
+        { value: "default", label: "Default" },
+        { value: "light", label: "Light" },
+        { value: "dark", label: "Dark" },
+        { value: "accent", label: "Accent" },
+      ],
+    },
+    {
+      key: "spacing",
+      title: "Spacing",
+      options: [
+        { value: "normal", label: "Normal" },
+        { value: "tight", label: "Tight" },
+        { value: "loose", label: "Loose" },
+      ],
+    },
+    {
+      key: "align",
+      title: "Alignment",
+      options: [
+        { value: "left", label: "Left" },
+        { value: "center", label: "Centre" },
+      ],
+    },
+  ];
+
   let mode = "text";
   let layer = null;
   let outline = null;
@@ -1562,6 +1616,26 @@
   function buildSectionBar() {
     const bar = document.createElement("div");
     bar.className = "weavr-section-bar";
+
+    // Appearance first, because it is what someone reaches for most often
+    // once a page is in the right order.
+    for (const group of APPEARANCE) {
+      const select = document.createElement("select");
+      select.className = "weavr-tool-select";
+      select.title = group.title;
+      select.dataset.weavrAppearance = group.key;
+      for (const option of group.options) {
+        const node = document.createElement("option");
+        node.value = option.value;
+        node.textContent = option.label;
+        select.appendChild(node);
+      }
+      bar.appendChild(select);
+    }
+    const separator = document.createElement("div");
+    separator.className = "weavr-tool-sep";
+    bar.appendChild(separator);
+
     for (const tool of SECTION_TOOLS) {
       const button = document.createElement("button");
       button.type = "button";
@@ -1571,6 +1645,12 @@
       button.dataset.weavrOp = tool.op;
       bar.appendChild(button);
     }
+
+    bar.addEventListener("change", (event) => {
+      const select = event.target.closest?.("[data-weavr-appearance]");
+      if (!select || !hovered) return;
+      setSectionAppearance(hovered);
+    });
     // Pointer-down rather than click, and swallowed, so the press never
     // reaches the site underneath and never moves focus off the section.
     bar.addEventListener("mousedown", (event) => event.preventDefault());
@@ -1582,6 +1662,32 @@
       runSectionOp(hovered, button.dataset.weavrOp);
     });
     return bar;
+  }
+
+  /**
+   * Sends the whole appearance, not just what changed.
+   *
+   * The three settings are stored as one object on the section, so a message
+   * carrying only the changed one would be read as "the others are now unset"
+   * and quietly clear them.
+   */
+  function setSectionAppearance(element) {
+    const pageId = element.dataset.weavrPage;
+    const index = Number(element.dataset.weavrSection);
+    if (!pageId || Number.isNaN(index) || !sectionBar) return;
+
+    const appearance = { pageId, index };
+    for (const group of APPEARANCE) {
+      const select = sectionBar.querySelector(`[data-weavr-appearance="${group.key}"]`);
+      const value = select?.value;
+      // The first option is the unset state, and is sent as absent so an
+      // untouched section keeps no appearance at all.
+      appearance[group.key] = value && value !== group.options[0].value ? value : null;
+    }
+
+    if (!emit("weavr://section-appearance", appearance)) {
+      console.error("[weavr] the editor bridge is unavailable");
+    }
   }
 
   function runSectionOp(element, op) {
@@ -1630,6 +1736,18 @@
       const op = button.dataset.weavrOp;
       button.disabled =
         (op === "up" && position <= 0) || (op === "down" && position >= all.length - 1);
+    }
+
+    // The site renders its own appearance, so what it is showing is the truth
+    // about what is stored — read it back off the element rather than keeping
+    // a copy here that a reload would make stale.
+    for (const group of APPEARANCE) {
+      const select = sectionBar.querySelector(`[data-weavr-appearance="${group.key}"]`);
+      if (select) {
+        select.value =
+          element.dataset[`weavrAppearance${group.key[0].toUpperCase()}${group.key.slice(1)}`] ||
+          group.options[0].value;
+      }
     }
 
     const barWidth = sectionBar.offsetWidth || 130;

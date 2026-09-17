@@ -14,7 +14,7 @@
 //! path it sits at, which is exactly the information a page registry is made
 //! of.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
 
@@ -34,12 +34,88 @@ pub struct SectionKind {
     pub component: String,
 }
 
+/// How a section is presented, as opposed to what it says.
+///
+/// Stored in the section's own entry, under a reserved `appearance` key in its
+/// props — not in a file alongside keyed by position. Reordering moves an
+/// entry's text as a unit, so appearance kept here travels with the section it
+/// belongs to and cannot come adrift of it. Anything keyed by position would
+/// have to be rewritten on every move, and would silently decorate the wrong
+/// section the first time that was missed.
+///
+/// Each value is one of a fixed set, because the site turns them into class
+/// names it was built with. A value outside the set has no styling behind it
+/// and would do nothing at all.
+pub const BACKGROUNDS: [&str; 4] = ["default", "light", "dark", "accent"];
+pub const SPACINGS: [&str; 3] = ["tight", "normal", "loose"];
+pub const ALIGNMENTS: [&str; 2] = ["left", "center"];
+
+pub use super::parser::APPEARANCE_KEY;
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Appearance {
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub background: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub spacing: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub align: Option<String>,
+}
+
+impl Appearance {
+    /// A section that sets nothing has no `appearance` key at all, so an
+    /// untouched registry stays exactly as its author wrote it.
+    pub fn is_empty(&self) -> bool {
+        self.background.is_none() && self.spacing.is_none() && self.align.is_none()
+    }
+
+    pub fn validate(&self) -> AppResult<()> {
+        let check = |value: &Option<String>, allowed: &[&str], what: &str| -> AppResult<()> {
+            if let Some(value) = value {
+                if !allowed.contains(&value.as_str()) {
+                    return Err(AppError::Other(format!(
+                        "'{value}' is not a {what}. Use one of: {}",
+                        allowed.join(", ")
+                    )));
+                }
+            }
+            Ok(())
+        };
+        check(&self.background, &BACKGROUNDS, "background")?;
+        check(&self.spacing, &SPACINGS, "spacing")?;
+        check(&self.align, &ALIGNMENTS, "alignment")
+    }
+
+    /// The source for this appearance, written the way the registry is.
+    pub fn literal(&self) -> String {
+        let parts: Vec<String> = [
+            ("background", &self.background),
+            ("spacing", &self.spacing),
+            ("align", &self.align),
+        ]
+        .into_iter()
+        .filter_map(|(key, value)| value.as_ref().map(|v| format!("{key}: '{v}'")))
+        .collect();
+
+        format!("{{ {} }}", parts.join(", "))
+    }
+}
+
 /// One section as it appears on a page.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PageSection {
     /// Position in the page's `sections` array — how it is addressed.
     pub index: usize,
     pub section_id: String,
+    #[serde(default)]
+    pub appearance: Appearance,
+}
+
+impl PageSection {
+    /// Where this section's props live, for setting a property on them.
+    pub fn props_path(&self, page: &Page) -> String {
+        format!("[{}].sections[{}].props", page.index, self.index)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -79,6 +155,8 @@ fn split_path(json_path: &str) -> Option<(usize, Option<usize>, &str)> {
             if field != "sections" {
                 return None;
             }
+            // The tail may be a path of its own — "props.appearance.background"
+            // — and is handed back whole for the caller to match on.
             Some((outer, Some(inner), tail.strip_prefix('.')?))
         }
     }
@@ -96,7 +174,13 @@ struct PageDraft {
     id: String,
     title: String,
     path: String,
-    sections: Vec<String>,
+    sections: Vec<SectionDraft>,
+}
+
+#[derive(Default)]
+struct SectionDraft {
+    section_id: String,
+    appearance: Appearance,
 }
 
 /// Every kind of section the site declares it can render.
@@ -144,7 +228,19 @@ pub fn pages(index: &ContentIndex) -> Vec<Page> {
             (None, "id") => draft.id = leaf.value.clone(),
             (None, "title") => draft.title = leaf.value.clone(),
             (None, "path") => draft.path = leaf.value.clone(),
-            (Some(at), "sectionId") => *grow(&mut draft.sections, at) = leaf.value.clone(),
+            (Some(at), "sectionId") => grow(&mut draft.sections, at).section_id = leaf.value.clone(),
+            (Some(at), field) => {
+                let Some(setting) = field.strip_prefix(&format!("props.{APPEARANCE_KEY}.")) else {
+                    continue;
+                };
+                let section = grow(&mut draft.sections, at);
+                match setting {
+                    "background" => section.appearance.background = Some(leaf.value.clone()),
+                    "spacing" => section.appearance.spacing = Some(leaf.value.clone()),
+                    "align" => section.appearance.align = Some(leaf.value.clone()),
+                    _ => {}
+                }
+            }
             _ => {}
         }
     }
@@ -162,7 +258,11 @@ pub fn pages(index: &ContentIndex) -> Vec<Page> {
                 .sections
                 .into_iter()
                 .enumerate()
-                .map(|(index, section_id)| PageSection { index, section_id })
+                .map(|(index, section)| PageSection {
+                    index,
+                    section_id: section.section_id,
+                    appearance: section.appearance,
+                })
                 .collect(),
         })
         .collect()
@@ -527,6 +627,103 @@ mod tests {
         // at, so an off-by-one here would rewrite the wrong page.
         let home = find(&index, "home").expect("no page with id 'home'");
         assert_eq!(home.sections_path(), format!("[{}].sections", home.index));
+    }
+
+    #[test]
+    fn an_appearance_only_accepts_what_the_site_can_render() {
+        let ok = Appearance {
+            background: Some("dark".into()),
+            spacing: Some("loose".into()),
+            align: Some("center".into()),
+        };
+        assert!(ok.validate().is_ok());
+        assert_eq!(ok.literal(), "{ background: 'dark', spacing: 'loose', align: 'center' }");
+
+        // These become class names. One outside the set has no styling behind
+        // it and would quietly do nothing.
+        let bad = Appearance { background: Some("chartreuse".into()), ..Default::default() };
+        assert!(bad.validate().is_err());
+        assert!(Appearance::default().is_empty());
+    }
+
+    #[test]
+    fn an_appearance_is_read_back_off_the_section_it_is_set_on() {
+        let source = "export const pageRegistry = [\n    {\n        id: 'home',\n        title: 'Home',\n        path: '/',\n        sections: [\n            { sectionId: 'hero', props: {} },\n            { sectionId: 'faqs', props: { appearance: { background: 'dark', align: 'center' } } }\n        ]\n    }\n];\n";
+
+        let built = pages(&ContentIndex::from_leaves(
+            crate::content::parser::parse_source(REGISTRY_FILE, source).unwrap(),
+        ));
+        assert_eq!(built[0].sections[0].appearance, Appearance::default());
+        assert_eq!(
+            built[0].sections[1].appearance,
+            Appearance {
+                background: Some("dark".into()),
+                align: Some("center".into()),
+                ..Default::default()
+            }
+        );
+    }
+
+    #[test]
+    fn an_appearance_is_never_offered_as_editable_copy() {
+        // "dark" and "center" are settings chosen from a list, not words a
+        // reader sees. Indexed as copy, a heading that happened to read
+        // "Center" could resolve to a section's alignment and rewrite it.
+        let source = "export const pageRegistry = [\n    { id: 'home', title: 'Home', path: '/', sections: [\n        { sectionId: 'faqs', props: { appearance: { background: 'dark' }, title: 'Questions' } }\n    ] }\n];\n";
+        let leaves = crate::content::parser::parse_source(REGISTRY_FILE, source).unwrap();
+
+        let editable: Vec<&str> = leaves
+            .iter()
+            .filter(|leaf| !leaf.is_structural)
+            .map(|leaf| leaf.value.as_str())
+            .collect();
+        assert!(editable.contains(&"Questions"), "real copy stopped being editable");
+        assert!(!editable.contains(&"dark"), "a setting was offered as copy");
+    }
+
+    /// Three copies of the same vocabulary: this module refuses anything else,
+    /// the bridge offers the choices, and the site turns them into classes.
+    /// The bridge is a resource file rather than compiled code, so nothing
+    /// would notice it offering a value Rust rejects — the control would
+    /// simply do nothing, with the reason only in a log.
+    #[test]
+    fn the_bridge_offers_exactly_the_appearances_this_accepts() {
+        let bridge = include_str!("../../resources/weavr-edit-bridge.js");
+
+        let group = |key: &str| {
+            bridge
+                .split_once(&format!("key: \"{key}\""))
+                .and_then(|(_, rest)| rest.split_once("options: ["))
+                .and_then(|(_, rest)| rest.split_once(']'))
+                .map(|(list, _)| list.to_string())
+                .unwrap_or_else(|| panic!("the bridge no longer declares a '{key}' group"))
+        };
+
+        for (key, allowed) in [
+            ("background", BACKGROUNDS.as_slice()),
+            ("spacing", SPACINGS.as_slice()),
+            ("align", ALIGNMENTS.as_slice()),
+        ] {
+            let offered = group(key);
+            for value in allowed {
+                assert!(
+                    offered.contains(&format!("value: \"{value}\"")),
+                    "the bridge cannot offer {key} '{value}'"
+                );
+            }
+            assert_eq!(
+                offered.matches("value: \"").count(),
+                allowed.len(),
+                "the bridge offers a different number of {key} choices than this accepts"
+            );
+        }
+    }
+
+    #[test]
+    fn where_a_sections_settings_live() {
+        let index = sample();
+        let page = find(&index, "home").unwrap();
+        assert_eq!(page.sections[1].props_path(&page), "[0].sections[1].props");
     }
 
     /// A new page, added to the real registry and the real menu.
