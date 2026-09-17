@@ -375,12 +375,28 @@ fn collect_leaves(
         }
         "array" => {
             let mut cursor = node.walk();
-            for (index, element) in node.named_children(&mut cursor).enumerate() {
+            // Counted after skipping comments, not before.
+            //
+            // `enumerate()` over every named child numbered the comments too,
+            // so one commented-out entry shifted the path of everything below
+            // it — `sections[2]` naming what is really the third element. The
+            // structure operations count the same elements without comments,
+            // so the two disagreed, and a list with a comment in it had its
+            // entries duplicated, removed and reordered off by one.
+            let mut index = 0usize;
+            for element in node.named_children(&mut cursor) {
                 if element.kind() == "comment" {
                     continue;
                 }
-                let child_path = format!("{path}[{index}]");
-                collect_leaves(file, export_name, child_path, &element, source, out);
+                collect_leaves(
+                    file,
+                    export_name,
+                    format!("{path}[{index}]"),
+                    &element,
+                    source,
+                    out,
+                );
+                index += 1;
             }
         }
         _ => {}
@@ -499,5 +515,40 @@ mod tests {
             .collect();
         assert!(editable.contains(&"[0].title"));
         assert!(editable.contains(&"[0].sections[0].props.title"));
+    }
+
+    /// Data files are hand-written and people comment entries out rather than
+    /// delete them. When an index here disagrees with the one the structure
+    /// operations count, an edit aimed at one entry lands on another.
+    #[test]
+    fn a_commented_out_entry_does_not_shift_the_ones_below_it() {
+        let source = r#"export const page = {
+            sections: [
+                { sectionId: "hero", label: "First" },
+                // { sectionId: "programSchedule", label: "Postponed" },
+                { sectionId: "faqs", label: "Second" }
+            ]
+        };"#;
+
+        let leaves = parse_source("src/data/t.js", source).unwrap();
+        let label = |path: &str| {
+            leaves
+                .iter()
+                .find(|l| l.json_path == path)
+                .map(|l| l.value.as_str())
+        };
+
+        assert_eq!(label("sections[0].label"), Some("First"));
+        assert_eq!(
+            label("sections[1].label"),
+            Some("Second"),
+            "the comment was counted as an entry, so every path below it is wrong"
+        );
+
+        // The same elements the structure operations address, counted the same
+        // way. These two numberings must not be allowed to drift apart.
+        let array = locate_array("src/data/t.js", source, "page", "sections").unwrap();
+        assert_eq!(array.elements.len(), 2);
+        assert!(source[array.elements[1].0..array.elements[1].1].contains("faqs"));
     }
 }
