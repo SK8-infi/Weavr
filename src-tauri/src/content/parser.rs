@@ -229,16 +229,19 @@ pub fn locate_array(
 
 /// Walks a dotted/indexed path ("sections", "groups[2].items") from a node.
 fn descend_to<'a>(node: &Node<'a>, path: &str, source: &str) -> Option<Node<'a>> {
-    let mut current = *node;
+    // Opened here too, so the operations that rearrange a list reach through a
+    // wrapper exactly as the indexing does. If only one of the two looked
+    // through it, an entry the panel offered could not be acted on.
+    let mut current = unwrap_call(node);
 
     for segment in path.split('.').filter(|s| !s.is_empty()) {
         let (name, indices) = split_indices(segment);
 
         if !name.is_empty() {
-            current = object_value(&current, name, source)?;
+            current = unwrap_call(&object_value(&current, name, source)?);
         }
         for index in indices {
-            current = array_element(&current, index)?;
+            current = unwrap_call(&array_element(&current, index)?);
         }
     }
 
@@ -308,6 +311,40 @@ fn array_location(node: &Node) -> AppResult<ArrayLocation> {
     })
 }
 
+/// Looks through a function wrapped around a literal.
+///
+/// Templates filter their own data on the way out — a navigation menu passing
+/// its items through `listed([...])` to drop the pages that are not being
+/// advertised yet. The export's value is then a call, not a list, and
+/// everything here walked straight past it: the whole site navigation was
+/// invisible, so its labels could not be edited and its entries could not be
+/// reordered.
+///
+/// Only a call with a single literal argument is opened, and the argument
+/// takes the call's place entirely, so paths read the same as they would
+/// without the wrapper — `navigationTree[0].label` either way.
+fn unwrap_call<'a>(node: &Node<'a>) -> Node<'a> {
+    if node.kind() != "call_expression" {
+        return *node;
+    }
+    let Some(arguments) = node.child_by_field_name("arguments") else {
+        return *node;
+    };
+
+    let mut cursor = arguments.walk();
+    let literals: Vec<Node> = arguments
+        .named_children(&mut cursor)
+        .filter(|child| matches!(child.kind(), "array" | "object"))
+        .collect();
+
+    // Two literal arguments give no reason to prefer one, and guessing would
+    // silently attach every path to the wrong half of the call.
+    match literals.as_slice() {
+        [only] => unwrap_call(only),
+        _ => *node,
+    }
+}
+
 fn collect_leaves(
     file: &str,
     export_name: &str,
@@ -316,6 +353,7 @@ fn collect_leaves(
     source: &str,
     out: &mut Vec<LeafRecord>,
 ) {
+    let node = &unwrap_call(node);
     match node.kind() {
         "string" | "template_string" => {
             if let Some((start, end, value)) = string_content_span(node, source) {
@@ -550,5 +588,53 @@ mod tests {
         let array = locate_array("src/data/t.js", source, "page", "sections").unwrap();
         assert_eq!(array.elements.len(), 2);
         assert!(source[array.elements[1].0..array.elements[1].1].contains("faqs"));
+    }
+
+    /// A template that filters its own data on the way out — a menu passing
+    /// its items through `listed([...])` to hide pages not yet advertised —
+    /// left the whole navigation invisible: nothing to edit, nothing to
+    /// reorder.
+    #[test]
+    fn a_literal_wrapped_in_a_call_is_still_read() {
+        let source = r#"export const navigationTree = listed([
+            { id: "home", label: "Home", path: "/" },
+            { id: "about", label: "About", path: "/about" }
+        ]);"#;
+
+        let leaves = parse_source("src/data/navigationData.js", source).unwrap();
+        let label = |path: &str| {
+            leaves.iter().find(|l| l.json_path == path).map(|l| l.value.as_str())
+        };
+
+        // Paths read as though the wrapper were not there, so nothing else has
+        // to know whether a given export happens to be wrapped.
+        assert_eq!(label("[0].label"), Some("Home"));
+        assert_eq!(label("[1].label"), Some("About"));
+
+        let array =
+            locate_array("src/data/navigationData.js", source, "navigationTree", "").unwrap();
+        assert_eq!(array.elements.len(), 2, "the list still could not be rearranged");
+    }
+
+    #[test]
+    fn a_call_with_nothing_to_choose_between_is_left_alone() {
+        // Two literal arguments give no reason to prefer either, and picking
+        // one would quietly attach every path to the wrong half of the call.
+        let source = r#"export const merged = combine([{ label: "A" }], [{ label: "B" }]);"#;
+        let leaves = parse_source("src/data/t.js", source).unwrap();
+        assert!(leaves.is_empty(), "guessed which argument was meant: {leaves:?}");
+    }
+
+    #[test]
+    fn a_wrapped_value_nested_inside_an_object_is_read() {
+        let source = r#"export const menu = { primary: listed([{ label: "Home" }]) };"#;
+        let leaves = parse_source("src/data/t.js", source).unwrap();
+        assert_eq!(
+            leaves
+                .iter()
+                .find(|l| l.json_path == "primary[0].label")
+                .map(|l| l.value.as_str()),
+            Some("Home")
+        );
     }
 }
