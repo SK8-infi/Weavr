@@ -338,4 +338,83 @@ mod tests {
         let home = find(&index, "home").expect("no page with id 'home'");
         assert_eq!(home.sections_path(), format!("[{}].sections", home.index));
     }
+
+    /// End to end on the real file, because addressing is the whole risk here.
+    /// Reading a page and writing to it are two separate pieces of counting,
+    /// and an edit that lands on the wrong page or the wrong position is not
+    /// something the user can be expected to notice before publishing.
+    #[test]
+    fn adds_a_section_to_the_right_page_of_a_real_registry() {
+        let Ok(project) = std::env::var("WEAVR_TEST_PROJECT") else {
+            eprintln!("skipped: set WEAVR_TEST_PROJECT to a conference site checkout");
+            return;
+        };
+        let Ok(original) = std::fs::read_to_string(
+            std::path::Path::new(&project).join(REGISTRY_FILE),
+        ) else {
+            eprintln!("skipped: no {REGISTRY_FILE} in the test project");
+            return;
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("src/data")).unwrap();
+        std::fs::write(root.join(REGISTRY_FILE), &original).unwrap();
+
+        let index = ContentIndex::build(root).unwrap();
+        let before = pages(&index);
+        // A page that is not first or last, so a mistake in either direction
+        // has somewhere to show up.
+        let target = before
+            .iter()
+            .find(|p| p.index > 0 && p.index + 1 < before.len() && p.sections.len() > 1)
+            .expect("no middle page with several sections")
+            .clone();
+        let kind = catalogue(&index)
+            .into_iter()
+            .find(|k| !target.sections.iter().any(|s| s.section_id == k.id))
+            .expect("every section kind is already on that page");
+
+        let at = 1;
+        crate::content::structure::insert_item(
+            root,
+            REGISTRY_FILE,
+            PAGES_EXPORT,
+            &target.sections_path(),
+            at,
+            &section_literal(&kind.id),
+        )
+        .unwrap();
+
+        let after = pages(&ContentIndex::build(root).unwrap());
+        assert_eq!(after.len(), before.len(), "a page appeared or vanished");
+
+        let edited = after.iter().find(|p| p.id == target.id).unwrap();
+        assert_eq!(
+            edited.sections.len(),
+            target.sections.len() + 1,
+            "the section did not land on '{}'",
+            target.id
+        );
+        assert_eq!(edited.sections[at].section_id, kind.id, "it landed at the wrong position");
+        assert_eq!(
+            edited.sections[0].section_id, target.sections[0].section_id,
+            "the section above it moved"
+        );
+        assert_eq!(
+            edited.sections[at + 1].section_id,
+            target.sections[at].section_id,
+            "the section it displaced is not directly below it"
+        );
+
+        // Every other page has to come through untouched — this is the check
+        // that catches an edit applied to the wrong page entirely.
+        for page in &before {
+            if page.id == target.id {
+                continue;
+            }
+            let same = after.iter().find(|p| p.id == page.id).expect("a page went missing");
+            assert_eq!(same, page, "page '{}' changed but should not have", page.id);
+        }
+    }
 }

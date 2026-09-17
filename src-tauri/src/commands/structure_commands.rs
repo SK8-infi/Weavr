@@ -2,6 +2,7 @@ use serde::Serialize;
 use tauri::{AppHandle, State};
 
 use crate::content::index::ContentIndex;
+use crate::content::pages;
 use crate::content::structure;
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
@@ -140,6 +141,129 @@ pub async fn structure_move(
     mark_edited(&state, &file)?;
     mutate(&app, &state, move |root| {
         structure::move_item(root, &file, &export, &path, from, to)
+    })
+    .await
+}
+
+// ---------------------------------------------------------------------------
+// Sections on a page
+//
+// The same three operations as above, addressed the way the preview can
+// actually refer to things: by page id and position, rather than by a path
+// into a file it knows nothing about. Everything below resolves that to a
+// `pageRegistry[n].sections` path and hands it to the operations already
+// proven on lists.
+// ---------------------------------------------------------------------------
+
+/// The pages a site declares, each with the sections it shows, in order.
+#[tauri::command]
+pub async fn page_list(state: State<'_, AppState>) -> AppResult<Vec<pages::Page>> {
+    let project = state.project.lock().unwrap();
+    let session = project.as_ref().ok_or(AppError::NoProjectOpen)?;
+    Ok(pages::pages(&session.index))
+}
+
+/// Every kind of section that can be added to a page.
+#[tauri::command]
+pub async fn section_catalogue(state: State<'_, AppState>) -> AppResult<Vec<pages::SectionKind>> {
+    let project = state.project.lock().unwrap();
+    let session = project.as_ref().ok_or(AppError::NoProjectOpen)?;
+    Ok(pages::catalogue(&session.index))
+}
+
+/// Where a page's sections live, resolved now rather than held on to.
+///
+/// A page's position moves whenever one is added above it, so this is looked
+/// up per operation from the id the preview knows.
+fn sections_path(state: &State<'_, AppState>, page_id: &str) -> AppResult<String> {
+    let project = state.project.lock().unwrap();
+    let session = project.as_ref().ok_or(AppError::NoProjectOpen)?;
+    Ok(pages::find(&session.index, page_id)?.sections_path())
+}
+
+#[tauri::command]
+pub async fn section_add(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    page_id: String,
+    index: usize,
+    section_id: String,
+) -> AppResult<()> {
+    // Checked against the manifest, because a sectionId the resolver does not
+    // know renders as nothing at all. The page would come back one section
+    // shorter with no error anywhere — the user would simply think the button
+    // did not work.
+    {
+        let project = state.project.lock().unwrap();
+        let session = project.as_ref().ok_or(AppError::NoProjectOpen)?;
+        if !pages::catalogue(&session.index)
+            .iter()
+            .any(|kind| kind.id == section_id)
+        {
+            return Err(AppError::Other(format!(
+                "'{section_id}' is not a section this site can render"
+            )));
+        }
+    }
+
+    let path = sections_path(&state, &page_id)?;
+    let literal = pages::section_literal(&section_id);
+    mark_edited(&state, pages::REGISTRY_FILE)?;
+    mutate(&app, &state, move |root| {
+        structure::insert_item(
+            root,
+            pages::REGISTRY_FILE,
+            pages::PAGES_EXPORT,
+            &path,
+            index,
+            &literal,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn section_remove(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    page_id: String,
+    index: usize,
+) -> AppResult<()> {
+    let path = sections_path(&state, &page_id)?;
+    mark_edited(&state, pages::REGISTRY_FILE)?;
+    mutate(&app, &state, move |root| {
+        structure::remove_item(root, pages::REGISTRY_FILE, pages::PAGES_EXPORT, &path, index)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn section_duplicate(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    page_id: String,
+    index: usize,
+) -> AppResult<()> {
+    let path = sections_path(&state, &page_id)?;
+    mark_edited(&state, pages::REGISTRY_FILE)?;
+    mutate(&app, &state, move |root| {
+        structure::duplicate_item(root, pages::REGISTRY_FILE, pages::PAGES_EXPORT, &path, index)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn section_move(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    page_id: String,
+    from: usize,
+    to: usize,
+) -> AppResult<()> {
+    let path = sections_path(&state, &page_id)?;
+    mark_edited(&state, pages::REGISTRY_FILE)?;
+    mutate(&app, &state, move |root| {
+        structure::move_item(root, pages::REGISTRY_FILE, pages::PAGES_EXPORT, &path, from, to)
     })
     .await
 }
