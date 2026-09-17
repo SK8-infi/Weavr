@@ -239,6 +239,110 @@
         outline-color: rgba(22, 163, 74, 0.6);
         background-color: rgba(22, 163, 74, 0.06);
       }
+      /* ---- Layout mode -------------------------------------------------
+         Rearranging a page is a different job from rewriting its words, and
+         doing both at once means every click is ambiguous. In layout mode the
+         text is left alone and the sections become the thing you handle.
+
+         All of this chrome lives in one fixed layer on top of the page. None
+         of it is ever inserted into the site's own markup: the framework
+         rendering that markup holds references to those nodes, and putting
+         something between them is what blanked the page once already. */
+      .weavr-layer {
+        position: fixed;
+        inset: 0;
+        z-index: 2147483640;
+        pointer-events: none;
+      }
+      .weavr-layer > * { pointer-events: auto; }
+      .weavr-outline {
+        position: fixed;
+        border: 2px solid #e8a317;
+        border-radius: 8px;
+        background: rgba(232, 163, 23, 0.07);
+        pointer-events: none;
+        transition: opacity 0.1s ease;
+      }
+      .weavr-tag {
+        position: fixed;
+        padding: 3px 8px;
+        border-radius: 6px 6px 0 0;
+        background: #e8a317;
+        color: #23180a;
+        font: 600 10px/1.4 ui-sans-serif, system-ui, sans-serif;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+        pointer-events: none;
+      }
+      .weavr-section-bar {
+        position: fixed;
+        display: flex;
+        gap: 2px;
+        padding: 4px;
+        border-radius: 10px;
+        background: rgba(28, 25, 23, 0.94);
+        backdrop-filter: blur(18px) saturate(150%);
+        -webkit-backdrop-filter: blur(18px) saturate(150%);
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.08),
+          0 0 0 1px rgba(255, 255, 255, 0.1),
+          0 12px 28px -10px rgba(0, 0, 0, 0.85);
+      }
+      .weavr-section-bar .weavr-tool-danger:hover {
+        background: rgba(220, 38, 38, 0.9);
+        color: #fff;
+      }
+      /* The seam between two sections, where a new one can go. */
+      .weavr-seam {
+        position: fixed;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 22px;
+        opacity: 0;
+        transition: opacity 0.12s ease;
+      }
+      .weavr-seam:hover,
+      .weavr-seam[data-weavr-near="1"] { opacity: 1; }
+      .weavr-seam::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        right: 0;
+        height: 2px;
+        border-radius: 2px;
+        background: linear-gradient(90deg, transparent, #e8a317 18%, #e8a317 82%, transparent);
+      }
+      .weavr-seam-add {
+        position: relative;
+        width: 24px;
+        height: 24px;
+        border: 0;
+        border-radius: 50%;
+        background: #e8a317;
+        color: #23180a;
+        font: 700 15px/1 ui-sans-serif, system-ui, sans-serif;
+        cursor: pointer;
+        box-shadow: 0 3px 10px -2px rgba(0, 0, 0, 0.6);
+      }
+      .weavr-seam-add:hover { filter: brightness(1.1); transform: scale(1.08); }
+      .weavr-catalogue {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        max-height: 220px;
+        margin-top: 8px;
+        overflow-y: auto;
+        /* A site has dozens of section kinds; the list scrolls rather than
+           growing a popover taller than the window. */
+        scrollbar-width: thin;
+      }
+      .weavr-catalogue-item { flex: none; text-align: left; }
+      body.weavr-layout [${EDITABLE_ATTR}] {
+        outline: none !important;
+        background-color: transparent !important;
+        cursor: default;
+      }
     `;
     document.head.appendChild(style);
   }
@@ -1327,6 +1431,39 @@
       return valueIndex.size > 0;
     },
 
+    /**
+     * Switches between rewriting the words and rearranging the page.
+     *
+     * Two jobs that want the same clicks. Trying to serve both at once makes
+     * every click ambiguous — is a press on a heading an edit, or the start of
+     * dragging its section? — so they are separate modes and only one is live.
+     */
+    setMode(next) {
+      const wanted = next === "layout" ? "layout" : "text";
+      if (wanted === mode) return;
+      mode = wanted;
+      if (mode === "layout") {
+        // Editing text and rearranging sections must not overlap: a field left
+        // focused would keep its caret and its toolbar over the layout chrome.
+        document.activeElement?.blur?.();
+        closePopover();
+        closeToolbar();
+        enterLayoutMode();
+      } else {
+        leaveLayoutMode();
+      }
+    },
+
+    /** The kinds of section this site can render, from its own manifest. */
+    setCatalogue(kinds) {
+      catalogue = Array.isArray(kinds) ? kinds : [];
+    },
+
+    /** Re-measures the chrome after the page re-renders under it. */
+    refreshLayout() {
+      retrack();
+    },
+
     /** Rolls elements back if Rust rejected the write. */
     rejectSave(fieldIds) {
       closePopover();
@@ -1339,6 +1476,375 @@
         });
     },
   };
+
+  /* =========================================================================
+     Layout mode: rearranging a page rather than rewriting it.
+
+     A template following the contract describes its pages as data — a list of
+     sections per page — and marks each rendered section with the page and
+     position it came from. That is all this needs: hovering a section shows
+     what it is and what can be done to it, and the seams between sections are
+     where a new one goes.
+
+     Every pixel of this is drawn in a fixed layer over the page. Nothing is
+     inserted into the site's own markup, and nothing in the site is mutated;
+     the only writes are events sent to Weavr, which edits the data file and
+     lets the page re-render itself.
+     ========================================================================= */
+
+  const SECTION_ATTR = "data-weavr-section";
+  const SECTION_TOOLS = [
+    { op: "up", label: "↑", title: "Move up" },
+    { op: "down", label: "↓", title: "Move down" },
+    { op: "duplicate", label: "⧉", title: "Duplicate" },
+    { op: "remove", label: "✕", title: "Remove", danger: true },
+  ];
+
+  let mode = "text";
+  let layer = null;
+  let outline = null;
+  let tag = null;
+  let sectionBar = null;
+  let hovered = null;
+  let trackQueued = false;
+
+  /**
+   * The rectangle a section occupies.
+   *
+   * The element carrying the attributes is `display: contents`, so it has no
+   * box of its own and reports an empty rectangle. Its children are what is
+   * actually on screen, so their union is the section.
+   */
+  function sectionRect(element) {
+    let box = null;
+    for (const child of element.children) {
+      const rect = child.getBoundingClientRect();
+      if (rect.width === 0 && rect.height === 0) continue;
+      box = box
+        ? {
+            top: Math.min(box.top, rect.top),
+            left: Math.min(box.left, rect.left),
+            right: Math.max(box.right, rect.right),
+            bottom: Math.max(box.bottom, rect.bottom),
+          }
+        : { top: rect.top, left: rect.left, right: rect.right, bottom: rect.bottom };
+    }
+    if (!box) return null;
+    return { ...box, width: box.right - box.left, height: box.bottom - box.top };
+  }
+
+  /** Every section on the page, in the order the data file lists them. */
+  function sections() {
+    return Array.from(document.querySelectorAll(`[${SECTION_ATTR}]`)).sort(
+      (a, b) => Number(a.dataset.weavrSection) - Number(b.dataset.weavrSection),
+    );
+  }
+
+  function ensureLayer() {
+    if (layer && layer.isConnected) return layer;
+    layer = document.createElement("div");
+    layer.className = "weavr-layer";
+    document.body.appendChild(layer);
+    return layer;
+  }
+
+  function label(element) {
+    // The section id as written in the data, spaced out for reading:
+    // "callForPapersSection" -> "Call For Papers".
+    const id = element.dataset.weavrSectionId || "Section";
+    return id
+      .replace(/Section$/, "")
+      .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+      .replace(/^./, (c) => c.toUpperCase())
+      .trim();
+  }
+
+  function buildSectionBar() {
+    const bar = document.createElement("div");
+    bar.className = "weavr-section-bar";
+    for (const tool of SECTION_TOOLS) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `weavr-tool${tool.danger ? " weavr-tool-danger" : ""}`;
+      button.textContent = tool.label;
+      button.title = tool.title;
+      button.dataset.weavrOp = tool.op;
+      bar.appendChild(button);
+    }
+    // Pointer-down rather than click, and swallowed, so the press never
+    // reaches the site underneath and never moves focus off the section.
+    bar.addEventListener("mousedown", (event) => event.preventDefault());
+    bar.addEventListener("click", (event) => {
+      const button = event.target.closest?.("[data-weavr-op]");
+      if (!button || !hovered) return;
+      event.preventDefault();
+      event.stopPropagation();
+      runSectionOp(hovered, button.dataset.weavrOp);
+    });
+    return bar;
+  }
+
+  function runSectionOp(element, op) {
+    const pageId = element.dataset.weavrPage;
+    const index = Number(element.dataset.weavrSection);
+    if (!pageId || Number.isNaN(index)) return;
+
+    // Asked for rather than done here. The section on screen is rendered from
+    // the data file, so Weavr changes the file and the page follows; moving
+    // the nodes about would only disagree with what is stored.
+    if (!emit("weavr://section-op", { pageId, index, op })) {
+      console.error("[weavr] the editor bridge is unavailable");
+      return;
+    }
+    hideSectionChrome();
+  }
+
+  function showSectionChrome(element) {
+    const box = sectionRect(element);
+    if (!box) return;
+
+    const host = ensureLayer();
+    if (!outline || !outline.isConnected) {
+      outline = document.createElement("div");
+      outline.className = "weavr-outline";
+      host.appendChild(outline);
+    }
+    if (!tag || !tag.isConnected) {
+      tag = document.createElement("div");
+      tag.className = "weavr-tag";
+      host.appendChild(tag);
+    }
+    if (!sectionBar || !sectionBar.isConnected) {
+      sectionBar = buildSectionBar();
+      host.appendChild(sectionBar);
+    }
+
+    hovered = element;
+    outline.style.cssText = `position:fixed;top:${box.top}px;left:${box.left}px;width:${box.width}px;height:${box.height}px`;
+    tag.textContent = label(element);
+    tag.style.cssText = `position:fixed;top:${Math.max(0, box.top - 21)}px;left:${box.left}px`;
+
+    const all = sections();
+    const position = all.indexOf(element);
+    for (const button of sectionBar.querySelectorAll("[data-weavr-op]")) {
+      const op = button.dataset.weavrOp;
+      button.disabled =
+        (op === "up" && position <= 0) || (op === "down" && position >= all.length - 1);
+    }
+
+    const barWidth = sectionBar.offsetWidth || 130;
+    sectionBar.style.cssText = `position:fixed;top:${Math.max(4, box.top + 6)}px;left:${Math.max(4, box.right - barWidth - 6)}px`;
+  }
+
+  function hideSectionChrome() {
+    hovered = null;
+    for (const node of [outline, tag, sectionBar]) {
+      if (node && node.isConnected) node.remove();
+    }
+    outline = tag = sectionBar = null;
+  }
+
+  /** The gaps between sections, each offering to put a new one there. */
+  function drawSeams() {
+    const host = ensureLayer();
+    const all = sections();
+    const wanted = all.length ? all.length + 1 : 0;
+
+    let seams = Array.from(host.querySelectorAll(".weavr-seam"));
+    while (seams.length > wanted) seams.pop().remove();
+    while (seams.length < wanted) {
+      const seam = document.createElement("div");
+      seam.className = "weavr-seam";
+      const add = document.createElement("button");
+      add.type = "button";
+      add.className = "weavr-seam-add";
+      add.textContent = "+";
+      add.title = "Add a section here";
+      seam.appendChild(add);
+      seam.addEventListener("mousedown", (event) => event.preventDefault());
+      seam.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        openCatalogue(Number(seam.dataset.weavrAt), seam);
+      });
+      host.appendChild(seam);
+      seams.push(seam);
+    }
+
+    const pageId = all[0]?.dataset.weavrPage;
+    seams.forEach((seam, at) => {
+      // A seam sits above the section it would push down; the last one sits
+      // under the final section, which is how a page gets a new bottom.
+      const anchor = at < all.length ? sectionRect(all[at]) : sectionRect(all[all.length - 1]);
+      if (!anchor) {
+        seam.style.display = "none";
+        return;
+      }
+      const y = at < all.length ? anchor.top : anchor.bottom;
+      seam.style.display = "";
+      seam.dataset.weavrAt = String(at);
+      seam.dataset.weavrPage = pageId || "";
+      seam.style.cssText += `;position:fixed;top:${y - 11}px;left:${anchor.left}px;width:${anchor.width}px`;
+    });
+  }
+
+  function retrack() {
+    if (mode !== "layout" || trackQueued) return;
+    trackQueued = true;
+    // setTimeout, not requestAnimationFrame, for the same reason the editable
+    // scan uses it: the preview is frequently occluded by the Weavr panel or
+    // by another window, and rAF does not fire in a hidden page. The chrome
+    // would simply never appear, with nothing to show for it.
+    setTimeout(() => {
+      trackQueued = false;
+      if (mode !== "layout") return;
+      if (hovered && hovered.isConnected) showSectionChrome(hovered);
+      else if (hovered) hideSectionChrome();
+      drawSeams();
+    }, 0);
+  }
+
+  function onLayoutPointerMove(event) {
+    if (mode !== "layout") return;
+    if (event.target.closest?.(".weavr-layer")) return;
+    const section = event.target.closest?.(`[${SECTION_ATTR}]`);
+    if (!section) {
+      if (hovered) hideSectionChrome();
+      return;
+    }
+    if (section !== hovered) showSectionChrome(section);
+  }
+
+  /** Swallows clicks on the page so layout mode never navigates away. */
+  function onLayoutClick(event) {
+    if (mode !== "layout") return;
+    if (event.target.closest?.(".weavr-layer")) return;
+    if (!event.target.closest?.(`[${SECTION_ATTR}]`)) return;
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  /* ---- The catalogue ------------------------------------------------------
+     What can be added, offered where it would go. The list comes from Weavr,
+     which reads the site's own manifest of section kinds — the bridge never
+     guesses at what a site can render. */
+
+  let catalogue = [];
+  let picker = null;
+
+  function closeCatalogue() {
+    if (picker && picker.isConnected) picker.remove();
+    picker = null;
+    document.removeEventListener("mousedown", onCataloguePointerDown, true);
+  }
+
+  function onCataloguePointerDown(event) {
+    if (!picker) return;
+    if (event.target.closest?.(".weavr-popover")) return;
+    if (event.target.closest?.(".weavr-seam")) return;
+    closeCatalogue();
+  }
+
+  function openCatalogue(at, seam) {
+    closeCatalogue();
+    const pageId = seam.dataset.weavrPage;
+    if (!pageId) return;
+
+    picker = document.createElement("div");
+    picker.className = "weavr-popover";
+    picker.innerHTML = `
+      <p class="weavr-popover-title">Add a section here</p>
+      <input class="weavr-popover-input" type="search" placeholder="Search sections" />
+      <div class="weavr-catalogue"></div>
+      <p class="weavr-popover-hint">${
+        catalogue.length
+          ? "Pick one to add it at this point in the page."
+          : "Weavr has not sent this site's section list yet."
+      }</p>
+    `;
+
+    const list = picker.querySelector(".weavr-catalogue");
+    const search = picker.querySelector(".weavr-popover-input");
+
+    const render = (term) => {
+      const needle = term.trim().toLowerCase();
+      const shown = catalogue.filter(
+        (kind) => !needle || readable(kind.id).toLowerCase().includes(needle),
+      );
+      list.replaceChildren(
+        ...shown.map((kind) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "weavr-btn weavr-btn-secondary weavr-catalogue-item";
+          button.textContent = readable(kind.id);
+          button.dataset.weavrKind = kind.id;
+          return button;
+        }),
+      );
+    };
+
+    list.addEventListener("click", (event) => {
+      const choice = event.target.closest?.("[data-weavr-kind]");
+      if (!choice) return;
+      if (!emit("weavr://section-add", { pageId, index: at, sectionId: choice.dataset.weavrKind })) {
+        console.error("[weavr] the editor bridge is unavailable");
+      }
+      closeCatalogue();
+      hideSectionChrome();
+    });
+    search.addEventListener("input", () => render(search.value));
+    picker.addEventListener("mousedown", (event) => {
+      // Keep the press off the site underneath, but let the search field take
+      // focus for typing.
+      if (event.target !== search) event.preventDefault();
+    });
+
+    render("");
+    document.body.appendChild(picker);
+
+    const box = seam.getBoundingClientRect();
+    const width = 288;
+    const height = picker.offsetHeight || 220;
+    const viewportW = document.documentElement.clientWidth;
+    const viewportH = document.documentElement.clientHeight;
+    const left = Math.min(Math.max(8, box.left + box.width / 2 - width / 2), viewportW - width - 8);
+    const below = box.bottom + 8;
+    picker.style.left = `${left}px`;
+    picker.style.top = `${below + height > viewportH ? Math.max(8, box.top - height - 8) : below}px`;
+
+    document.addEventListener("mousedown", onCataloguePointerDown, true);
+    search.focus();
+  }
+
+  /** "callForPapersSection" -> "Call For Papers" */
+  function readable(id) {
+    return id
+      .replace(/Section$/, "")
+      .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+      .replace(/^./, (c) => c.toUpperCase())
+      .trim();
+  }
+
+  function enterLayoutMode() {
+    document.body.classList.add("weavr-layout");
+    document.addEventListener("mousemove", onLayoutPointerMove, true);
+    document.addEventListener("click", onLayoutClick, true);
+    window.addEventListener("scroll", retrack, true);
+    window.addEventListener("resize", retrack);
+    retrack();
+  }
+
+  function leaveLayoutMode() {
+    document.body.classList.remove("weavr-layout");
+    document.removeEventListener("mousemove", onLayoutPointerMove, true);
+    document.removeEventListener("click", onLayoutClick, true);
+    window.removeEventListener("scroll", retrack, true);
+    window.removeEventListener("resize", retrack);
+    closeCatalogue();
+    hideSectionChrome();
+    if (layer && layer.isConnected) layer.remove();
+    layer = null;
+  }
 
   // Announce ourselves so Weavr sends the current values. This is what makes
   // the page editable on first load and again after every reload — a dev-server

@@ -8,12 +8,18 @@ use serde::Deserialize;
 use tauri::{AppHandle, Emitter, Listener, Manager};
 
 use crate::content::index::ContentIndex;
-use crate::layout;
+use crate::content::pages;
+use crate::content::structure;
 use crate::content::styles;
+use crate::layout;
 use crate::content::writer;
 use crate::state::AppState;
 
 pub const TEXT_EDITED_EVENT: &str = "weavr://text-edited";
+/// A section was moved, copied or taken off a page from the preview.
+pub const SECTION_OP_EVENT: &str = "weavr://section-op";
+/// A section was chosen from the catalogue to go in at a given point.
+pub const SECTION_ADD_EVENT: &str = "weavr://section-add";
 /// A size or alignment changed on the preview.
 pub const STYLE_EDITED_EVENT: &str = "weavr://style-edited";
 /// The preview page announcing that its bridge is installed and wants values.
@@ -49,6 +55,25 @@ struct StyleEditedPayload {
     align: Option<String>,
 }
 
+/// A section identified the way the preview can name it: which page it is on
+/// and where in that page's list it sits.
+#[derive(Debug, Deserialize)]
+struct SectionOpPayload {
+    #[serde(rename = "pageId")]
+    page_id: String,
+    index: usize,
+    op: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SectionAddPayload {
+    #[serde(rename = "pageId")]
+    page_id: String,
+    index: usize,
+    #[serde(rename = "sectionId")]
+    section_id: String,
+}
+
 pub fn register(app: &AppHandle) {
     // The preview asks for its values whenever its bridge loads — on first
     // open and again after every dev-server reload, which wipes them.
@@ -73,6 +98,32 @@ pub fn register(app: &AppHandle) {
         });
     });
 
+    let section_handle = app.clone();
+    app.listen(SECTION_OP_EVENT, move |event| {
+        let Ok(payload) = serde_json::from_str::<SectionOpPayload>(event.payload()) else {
+            return;
+        };
+        let handle = section_handle.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            if let Err(message) = apply_section_op(&handle, &payload) {
+                let _ = handle.emit_to(layout::PANEL_LABEL, EDIT_FAILED_EVENT, message);
+            }
+        });
+    });
+
+    let add_handle = app.clone();
+    app.listen(SECTION_ADD_EVENT, move |event| {
+        let Ok(payload) = serde_json::from_str::<SectionAddPayload>(event.payload()) else {
+            return;
+        };
+        let handle = add_handle.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            if let Err(message) = apply_section_add(&handle, &payload) {
+                let _ = handle.emit_to(layout::PANEL_LABEL, EDIT_FAILED_EVENT, message);
+            }
+        });
+    });
+
     let style_handle = app.clone();
     app.listen(STYLE_EDITED_EVENT, move |event| {
         let Ok(payload) = serde_json::from_str::<StyleEditedPayload>(event.payload()) else {
@@ -85,6 +136,105 @@ pub fn register(app: &AppHandle) {
             report_style_result(&handle, &payload, result);
         });
     });
+}
+
+/// Turns a press in the preview into an edit of the page registry.
+///
+/// "up" and "down" are worked out here rather than in the preview: the page is
+/// the one thing that knows how many sections it has, and a move past either
+/// end has to be refused rather than clamped into a no-op that looks like a
+/// broken button.
+fn apply_section_op(app: &AppHandle, payload: &SectionOpPayload) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let (root, path, count) = {
+        let project = state.project.lock().unwrap();
+        let session = project.as_ref().ok_or("no project is open")?;
+        let page = pages::find(&session.index, &payload.page_id).map_err(|e| e.to_string())?;
+        (session.root.clone(), page.sections_path(), page.sections.len())
+    };
+
+    if payload.index >= count {
+        return Err(format!(
+            "this page has {count} sections, so there is nothing at position {}",
+            payload.index + 1
+        ));
+    }
+
+    let at = payload.index;
+    match payload.op.as_str() {
+        "up" if at == 0 => return Err("this section is already at the top".into()),
+        "down" if at + 1 >= count => return Err("this section is already at the bottom".into()),
+        "up" => structure::move_item(&root, pages::REGISTRY_FILE, pages::PAGES_EXPORT, &path, at, at - 1),
+        "down" => structure::move_item(&root, pages::REGISTRY_FILE, pages::PAGES_EXPORT, &path, at, at + 1),
+        "duplicate" => {
+            structure::duplicate_item(&root, pages::REGISTRY_FILE, pages::PAGES_EXPORT, &path, at)
+        }
+        "remove" => {
+            structure::remove_item(&root, pages::REGISTRY_FILE, pages::PAGES_EXPORT, &path, at)
+        }
+        other => return Err(format!("'{other}' is not something that can be done to a section")),
+    }
+    .map_err(|e| e.to_string())?;
+
+    finish_structural_edit(app)
+}
+
+fn apply_section_add(app: &AppHandle, payload: &SectionAddPayload) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let (root, path) = {
+        let project = state.project.lock().unwrap();
+        let session = project.as_ref().ok_or("no project is open")?;
+
+        // A sectionId the site cannot resolve renders as nothing at all, so
+        // the page would come back unchanged with no error to show for it.
+        if !pages::catalogue(&session.index)
+            .iter()
+            .any(|kind| kind.id == payload.section_id)
+        {
+            return Err(format!(
+                "'{}' is not a section this site can render",
+                payload.section_id
+            ));
+        }
+
+        let page = pages::find(&session.index, &payload.page_id).map_err(|e| e.to_string())?;
+        (session.root.clone(), page.sections_path())
+    };
+
+    structure::insert_item(
+        &root,
+        pages::REGISTRY_FILE,
+        pages::PAGES_EXPORT,
+        &path,
+        payload.index,
+        &pages::section_literal(&payload.section_id),
+    )
+    .map_err(|e| e.to_string())?;
+
+    finish_structural_edit(app)
+}
+
+/// Re-reads the project and tells both halves of the app what changed.
+///
+/// The index has to be rebuilt before anything else looks at it: every byte
+/// offset after the splice has moved, so a later edit using the old offsets
+/// would land in the wrong place.
+fn finish_structural_edit(app: &AppHandle) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    {
+        let mut project = state.project.lock().unwrap();
+        let session = project.as_mut().ok_or("no project is open")?;
+        session.edited_files.insert(pages::REGISTRY_FILE.to_string());
+        session.index = ContentIndex::build(&session.root).map_err(|e| e.to_string())?;
+    }
+
+    let _ = crate::commands::preview_commands::push_editable_values(app);
+    let _ = app.emit_to(
+        layout::PANEL_LABEL,
+        CONTENT_CHANGED_EVENT,
+        Vec::<String>::new(),
+    );
+    Ok(())
 }
 
 fn apply_style(app: &AppHandle, payload: &StyleEditedPayload) -> Result<(), String> {
@@ -204,7 +354,13 @@ mod tests {
     /// sets disjoint.
     #[test]
     fn no_handler_emits_an_event_it_listens_for() {
-        let listened = [BRIDGE_READY_EVENT, TEXT_EDITED_EVENT, STYLE_EDITED_EVENT];
+        let listened = [
+            BRIDGE_READY_EVENT,
+            TEXT_EDITED_EVENT,
+            STYLE_EDITED_EVENT,
+            SECTION_OP_EVENT,
+            SECTION_ADD_EVENT,
+        ];
         let emitted = [CONTENT_CHANGED_EVENT, EDIT_FAILED_EVENT];
 
         for name in emitted {

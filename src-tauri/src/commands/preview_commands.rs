@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
 use crate::error::{AppError, AppResult};
+use crate::content::pages;
 use crate::content::styles;
 use crate::layout;
 use crate::nodejs::preview_server;
@@ -75,18 +76,29 @@ pub fn push_editable_values(app: &AppHandle) -> AppResult<()> {
     let styles_payload = serde_json::to_string(&styles)
         .map_err(|e| AppError::Other(format!("could not serialize field styles: {e}")))?;
 
+    // What can be added to a page, read from the site's own manifest. The
+    // bridge never guesses at this: a section it offered that the site cannot
+    // resolve would be added to the data and then render as nothing.
+    let catalogue_payload = serde_json::to_string(&pages::catalogue(&session.index))
+        .map_err(|e| AppError::Other(format!("could not serialize the section catalogue: {e}")))?;
+
     // The page may still be loading when this runs, so the bridge polls for
     // itself rather than assuming it is already installed.
     let script = format!(
         r#"(function(){{
              var payload = {payload};
              var styles = {styles_payload};
+             var catalogue = {catalogue_payload};
              var tries = 0;
              (function apply(){{
                if (window.__weavrEditBridge) {{
                  window.__weavrEditBridge.setValues(payload);
                  window.__weavrEditBridge.setStyles(styles);
+                 window.__weavrEditBridge.setCatalogue(catalogue);
                  window.__weavrEditBridge.setEnabled(true);
+                 // A structural edit re-renders the page underneath the layout
+                 // chrome, which is then measuring boxes that have moved.
+                 window.__weavrEditBridge.refreshLayout();
                  return;
                }}
                if (tries++ < 100) setTimeout(apply, 50);
@@ -103,6 +115,26 @@ pub fn push_editable_values(app: &AppHandle) -> AppResult<()> {
 #[tauri::command]
 pub async fn panel_set_expanded(app: AppHandle, expanded: bool) -> AppResult<()> {
     layout::set_panel_expanded(&app, expanded)
+}
+
+/// Switches the preview between editing words and rearranging sections.
+///
+/// Two jobs that want the same clicks, so only one is live at a time. Held in
+/// the preview rather than here: it is a property of how that page is being
+/// handled, and it has to survive being set again after every reload.
+#[tauri::command]
+pub async fn preview_set_mode(app: AppHandle, mode: String) -> AppResult<()> {
+    let Some(preview) = app.get_webview(layout::PREVIEW_LABEL) else {
+        return Ok(());
+    };
+    // Anything other than the one word is treated as "text" by the bridge, so
+    // a mode that never arrives leaves the preview editable rather than inert.
+    let wanted = if mode == "layout" { "layout" } else { "text" };
+    preview
+        .eval(&format!(
+            "window.__weavrEditBridge && window.__weavrEditBridge.setMode('{wanted}');"
+        ))
+        .map_err(|e| AppError::Other(format!("could not switch the preview mode: {e}")))
 }
 
 #[tauri::command]

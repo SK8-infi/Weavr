@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import ContentPanel from "./ContentPanel";
 import StructurePanel from "./StructurePanel";
+import LayoutPanel from "./LayoutPanel";
 import PublishBar from "./PublishBar";
 import SyncBar from "./SyncBar";
 import Button from "../components/ui/Button";
@@ -11,8 +12,15 @@ import { cn } from "../utils/cn";
 
 const TABS = [
   { id: "text", label: "Text", icon: "text" },
+  { id: "layout", label: "Layout", icon: "layout" },
   { id: "lists", label: "Lists", icon: "layers" },
 ];
+
+/* Which tabs put the preview into layout mode.
+   Rearranging a page and rewriting its words both want the same clicks, so
+   only one can be live — and which one is decided by the tab that is open,
+   rather than by a separate switch the user has to remember to flip back. */
+const LAYOUT_TABS = new Set(["layout"]);
 
 /**
  * The editing panel, docked beside the live site.
@@ -37,6 +45,15 @@ export default function EditorView({ project, onBack }) {
     // Start from the rail every time a site is opened.
     invoke("panel_set_expanded", { expanded: false }).catch(() => {});
   }, [info.local_path]);
+
+  // Told to the preview rather than kept here: a reload wipes what the bridge
+  // holds, so the mode is re-sent whenever the tab changes and whenever a site
+  // is opened.
+  useEffect(() => {
+    invoke("preview_set_mode", { mode: LAYOUT_TABS.has(tab) ? "layout" : "text" }).catch(
+      () => {},
+    );
+  }, [tab, info.local_path]);
 
   function openTab(id) {
     setTab(id);
@@ -102,12 +119,18 @@ export default function EditorView({ project, onBack }) {
         </p>
       )}
 
+      {tab === "layout" && (
+        <p className="shrink-0 bg-brand-50/50 px-4 py-2 text-[11px] leading-relaxed text-canvas-600">
+          Hover a section on your site to move, copy or remove it. Use the{" "}
+          <Kbd>+</Kbd> between sections to add a new one. Text editing is paused
+          while this tab is open.
+        </p>
+      )}
+
       <div className="min-h-0 flex-1">
-        {tab === "text" ? (
-          <ContentPanel projectPath={info.local_path} />
-        ) : (
-          <StructurePanel />
-        )}
+        {tab === "text" && <ContentPanel projectPath={info.local_path} />}
+        {tab === "lists" && <StructurePanel />}
+        {tab === "layout" && <LayoutPanel />}
       </div>
 
       <PublishBar />
