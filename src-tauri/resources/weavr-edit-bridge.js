@@ -984,8 +984,8 @@
         is holding direct references to the nodes it created here; finding them
         gone is what threw `removeChild` and took the whole page down.
 
-        `restore` hands back and rolls the text back with it; `handBack` leaves
-        the edit on screen for the write that is about to be sent.
+        Handing back also rolls the wording back, so the field shows what is
+        stored until the write lands and the reload brings the new text in.
     */
     const newValue = normalize(element.textContent || "");
     const marked = normalize(htmlToMarks(element));
@@ -1022,7 +1022,7 @@
         restore(element);
         return;
       }
-      handBack(element, newValue);
+      restore(element);
       return send(element, fieldId, newValue.slice(prefix.length, newValue.length - suffix.length));
     }
 
@@ -1044,7 +1044,7 @@
       return;
     }
 
-    handBack(element, newValue);
+    restore(element);
     return send(element, fieldId, marked || newValue);
   }
 
@@ -1078,59 +1078,33 @@
   }
 
   /**
-   * Writes text into nodes React already owns, without changing the structure.
+   * Hands an element back to React exactly as it rendered it, and with that
+   * puts the field back to its last saved state — nodes, emphasis and text.
    *
-   * Only a node's data changes, which React overwrites on its next render and
-   * never trips over — unlike adding or removing nodes, which is what crashed
-   * it. The first text node takes the whole string and the rest are emptied,
-   * so an edit that dropped emphasis shows unemphasised for the moment before
-   * the file write comes back rather than showing the old words.
+   * It is deliberately all-or-nothing. An earlier version tried to leave the
+   * new wording on screen while the write was in flight, by writing the value
+   * into the first of React's text nodes and emptying the others. That looked
+   * right on a field of plain text and wrecked anything with emphasis in it:
+   * the formatting vanished and empty <strong> tags were left behind, which
+   * the next edit serialised as `****` and wrote into the content file. A
+   * field's markup only ever has one honest source, which is React.
+   *
+   * So the field shows the stored text until the write lands and the reload
+   * brings the new one back. That is a visible pause, and it is worth it.
    */
-  function showText(record, value) {
-    const [first, ...rest] = record.text;
-    if (!first) return;
-    if (first.node.data !== value) first.node.data = value;
-    for (const { node } of rest) {
-      if (node.data !== "") node.data = "";
-    }
-  }
-
-  /**
-   * Hands an element back to React, with the nodes it rendered.
-   *
-   * `keep` is the text to leave on screen: the edit that is on its way to disk,
-   * so an accepted change does not flicker back to the old wording while the
-   * write and the reload that follows it are in flight. Omit it to roll back
-   * instead — those nodes were rendering the last saved value, so the field
-   * shows it again, emphasis included and without building markup React would
-   * not recognise.
-   *
-   * A rollback ends the custody. Keeping an edit does not: the structure is
-   * React's again but the text is not what is stored, so a write that turns out
-   * to be refused still has to be able to put the stored text back.
-   */
-  function releaseToReact(element, keep) {
+  function releaseToReact(element) {
     const record = reactNodes.get(element);
     if (!record) return false;
 
-    if (keep === undefined) revertText(record);
-    if (record.held) {
-      record.held = false;
-      element.replaceChildren(...record.nodes);
-    }
-    if (keep === undefined) reactNodes.delete(element);
-    else showText(record, keep);
+    revertText(record);
+    if (record.held) element.replaceChildren(...record.nodes);
+    reactNodes.delete(element);
     return true;
   }
 
   /** Puts an element back to its last saved state, markers and all. */
   function restore(element) {
     releaseToReact(element);
-  }
-
-  /** Gives the nodes back but leaves the edited text on screen. */
-  function handBack(element, shownText) {
-    releaseToReact(element, shownText);
   }
 
   /** Hands a new value to Weavr, and rolls back if it cannot be reached. */

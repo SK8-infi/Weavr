@@ -195,18 +195,85 @@ test("bolding nothing does not write an empty pair of markers", async () => {
   );
 });
 
-test("an edit is still on screen while it is being written", async () => {
-  // Handing React's nodes back must not undo the edit: the write and the
-  // reload it triggers take a moment, and the field flicking back to the old
-  // wording in between reads as a failed edit.
+test("a paragraph with several emphasised runs survives an edit", async () => {
+  // The real shape of the About paragraph: emphasis in the middle, so the
+  // element has many text nodes rather than one. Anything that rebuilds the
+  // field from a single string has to get every one of them right, and getting
+  // it wrong duplicates the tail.
   const env = await setup();
-  const { element } = await editableParagraph(env, { text: "Hello world" });
+  const text = "The **5th IEEE** conference is held in **Kathmandu** for researchers and students";
+  const { element } = await editableParagraph(env, { text });
 
   focus(env.window, element);
-  element.textContent = "Goodbye world";
+  // An ordinary typing edit: the browser mutates the text node in place.
+  element.firstChild.data = "That ";
   blur(env.window, element);
 
-  assert.equal(env.window.document.getElementById("field").textContent, "Goodbye world");
+  const field = env.window.document.getElementById("field");
+  assert.equal(
+    field.textContent,
+    "The 5th IEEE conference is held in Kathmandu for researchers and students",
+    "the field does not read as one clean copy of the stored text",
+  );
+  assert.equal(field.querySelectorAll("strong").length, 2, "the emphasis was lost");
+});
+
+test("blurring leaves no empty emphasis tags behind", async () => {
+  // Where the `****` in the conference's About paragraph actually came from.
+  // Rebuilding the field from a single string emptied every emphasised run but
+  // left the tags in place; the next edit serialised those as empty marker
+  // pairs and wrote them to the content file, which made the paragraph
+  // uneditable. Nothing may be left for htmlToMarks to find.
+  const env = await setup();
+  const { element } = await editableParagraph(env, {
+    text: "The **5th IEEE** conference in **Kathmandu** for researchers",
+  });
+
+  focus(env.window, element);
+  element.innerHTML = "The 5th IEEE conference in <b>Kathmandu</b> for researchers";
+  blur(env.window, element);
+
+  const field = env.window.document.getElementById("field");
+  const empty = [...field.querySelectorAll("strong, b, em, i, u")].filter(
+    (node) => node.textContent.trim() === "",
+  );
+  assert.deepEqual(empty.map((n) => n.outerHTML), [], "empty emphasis tags were left in the field");
+
+  // And a second round trip must not turn them into markers in the saved value.
+  focus(env.window, element);
+  blur(env.window, element);
+  const saved = env.emitted
+    .filter((e) => e.name === "weavr://text-edited")
+    .map((e) => e.payload.newValue);
+  assert.deepEqual(
+    saved.filter((v) => v.includes("****")),
+    [],
+    "an empty marker pair reached the saved value",
+  );
+});
+
+test("an edit leaves nothing behind for the scanner to adopt separately", async () => {
+  // The bridge wraps a bare text node whose whole content is a known value in
+  // an element of its own so it has something to make editable. If blurring
+  // leaves the entire field value sitting in one text node, that rule fires on
+  // the bridge's own handiwork: a span React knows nothing about is injected
+  // mid-paragraph, and the outlines nest.
+  const env = await setup();
+  const { element } = await editableParagraph(env, {
+    text: "The **5th IEEE** conference for researchers",
+  });
+
+  focus(env.window, element);
+  element.firstChild.data = "That ";
+  blur(env.window, element);
+  await settle();
+
+  const field = env.window.document.getElementById("field");
+  assert.equal(
+    field.querySelectorAll("[data-weavr-field], [data-weavr-wrapped]").length,
+    0,
+    "a second editable element was created inside the paragraph",
+  );
 });
 
 test("a refused write is rolled back on screen", async () => {
