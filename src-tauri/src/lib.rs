@@ -21,7 +21,7 @@ use commands::repo_commands::{repo_clone, repo_list};
 use commands::setup_commands::project_install;
 use commands::sync_commands::{sync_pull, sync_status};
 use commands::structure_commands::{
-    page_list, section_add, section_catalogue, section_duplicate, section_move, section_remove,
+    page_create, page_list, page_remove, section_add, section_catalogue, section_duplicate, section_move, section_remove,
     structure_duplicate, structure_lists, structure_move, structure_remove,
 };
 use layout::PanelState;
@@ -65,6 +65,8 @@ pub fn run() {
             structure_remove,
             structure_move,
             page_list,
+            page_create,
+            page_remove,
             section_catalogue,
             section_add,
             section_remove,

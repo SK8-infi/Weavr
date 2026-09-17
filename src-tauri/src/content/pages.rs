@@ -178,6 +178,124 @@ pub fn find(index: &ContentIndex, page_id: &str) -> AppResult<Page> {
         .ok_or_else(|| AppError::Other(format!("there is no page '{page_id}'")))
 }
 
+/// Where the site's menu lives, so a new page can be reached by browsing to it
+/// rather than only by knowing the URL.
+pub const NAV_FILE: &str = "src/data/navigationData.js";
+pub const NAV_EXPORT: &str = "navigationTree";
+
+/// "Keynote & Invited Talks" -> "keynote-invited-talks"
+///
+/// Used for both the page id and its URL, so what someone types as a title
+/// decides both and there is nothing further to fill in.
+pub fn slug(text: &str) -> String {
+    let mut out = String::new();
+    let mut pending_dash = false;
+
+    for ch in text.chars() {
+        if ch.is_ascii_alphanumeric() {
+            if pending_dash && !out.is_empty() {
+                out.push('-');
+            }
+            pending_dash = false;
+            out.extend(ch.to_lowercase());
+        } else {
+            pending_dash = true;
+        }
+    }
+    out
+}
+
+/// A slug no existing page is already using.
+///
+/// Two pages sharing an id would make `find` ambiguous and two sharing a path
+/// would leave the second unreachable — the router matches the first and never
+/// reaches the other. Neither fails loudly, so both are prevented here.
+pub fn unique_slug(index: &ContentIndex, desired: &str) -> String {
+    let existing = pages(index);
+    let taken = |candidate: &str| {
+        existing
+            .iter()
+            .any(|page| page.id == candidate || page.path == format!("/{candidate}"))
+    };
+
+    if !taken(desired) {
+        return desired.to_string();
+    }
+    for suffix in 2..1000 {
+        let candidate = format!("{desired}-{suffix}");
+        if !taken(&candidate) {
+            return candidate;
+        }
+    }
+    format!("{desired}-{}", std::process::id())
+}
+
+/// Checks a page can be added before anything is written.
+pub fn validate_new(index: &ContentIndex, id: &str, path: &str) -> AppResult<()> {
+    if id.is_empty() {
+        return Err(AppError::Other(
+            "give the page a name with at least one letter or number in it".into(),
+        ));
+    }
+    if !path.starts_with('/') {
+        return Err(AppError::Other(format!("'{path}' has to start with a /")));
+    }
+
+    for page in pages(index) {
+        if page.id == id {
+            return Err(AppError::Other(format!(
+                "there is already a page called '{id}'"
+            )));
+        }
+        if page.path == path {
+            // The router matches the first entry, so the second would simply
+            // never open — a page that exists and cannot be reached.
+            return Err(AppError::Other(format!(
+                "'{}' already uses the address {path}",
+                page.title
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// The source for a new page.
+///
+/// Written multi-line with the same indentation the registry already uses, so
+/// the file still reads as something a person maintains by hand — which they
+/// will, the moment they want something Weavr cannot do.
+pub fn page_literal(id: &str, title: &str, path: &str, section_ids: &[String]) -> String {
+    let sections = section_ids
+        .iter()
+        .map(|section_id| format!("            {}", section_literal(section_id)))
+        .collect::<Vec<_>>()
+        .join(",\n");
+
+    format!(
+        "{{\n        id: '{id}',\n        title: '{}',\n        path: '{path}',\n        sections: [{}]\n    }}",
+        escape(title),
+        if sections.is_empty() {
+            String::new()
+        } else {
+            format!("\n{sections}\n        ")
+        }
+    )
+}
+
+/// A menu entry pointing at a page.
+pub fn nav_literal(id: &str, label: &str, path: &str) -> String {
+    format!(
+        "{{ id: '{id}', label: '{}', type: 'link', path: '{path}' }}",
+        escape(label)
+    )
+}
+
+/// Titles are written into single-quoted literals, so a quote or a backslash
+/// in one would end the string early and leave the file unparseable.
+fn escape(text: &str) -> String {
+    text.replace('\\', "\\\\").replace('\'', "\\'")
+}
+
 /// The source for a new section entry.
 ///
 /// `props` is left empty rather than omitted so the object matches the shape
@@ -287,6 +405,78 @@ mod tests {
         assert_eq!(section_literal("faqsSection"), "{ sectionId: 'faqsSection', props: {} }");
     }
 
+    #[test]
+    fn a_title_becomes_an_address() {
+        assert_eq!(slug("Keynote & Invited Talks"), "keynote-invited-talks");
+        assert_eq!(slug("  Awards  "), "awards");
+        assert_eq!(slug("IATMSI-2027"), "iatmsi-2027");
+        assert_eq!(slug("!!!"), "");
+    }
+
+    #[test]
+    fn a_new_page_never_takes_an_address_that_is_in_use() {
+        // Two pages on one path is not an error anyone sees: the router
+        // matches the first and the second simply never opens.
+        let index = sample();
+        assert_eq!(unique_slug(&index, "team"), "team");
+        assert_eq!(unique_slug(&index, "about"), "about-2");
+    }
+
+    #[test]
+    fn a_page_that_would_clash_is_refused_before_anything_is_written() {
+        let index = sample();
+        assert!(validate_new(&index, "team", "/team").is_ok());
+        assert!(validate_new(&index, "about", "/team").is_err(), "duplicate id allowed");
+        assert!(validate_new(&index, "team", "/about").is_err(), "duplicate path allowed");
+        assert!(validate_new(&index, "", "/team").is_err(), "empty id allowed");
+        assert!(validate_new(&index, "team", "team").is_err(), "path without a / allowed");
+    }
+
+    #[test]
+    fn a_new_page_reads_back_as_the_page_that_was_asked_for() {
+        let literal = page_literal("team", "Our Team", "/team", &["hero".into(), "faqs".into()]);
+        let source = format!("export const pageRegistry = [\n    {literal}\n];\n");
+
+        let leaves = crate::content::parser::parse_source(REGISTRY_FILE, &source).unwrap();
+        let built = pages(&ContentIndex::from_leaves(leaves));
+
+        assert_eq!(built.len(), 1);
+        assert_eq!(built[0].id, "team");
+        assert_eq!(built[0].title, "Our Team");
+        assert_eq!(built[0].path, "/team");
+        assert_eq!(
+            built[0].sections.iter().map(|s| s.section_id.as_str()).collect::<Vec<_>>(),
+            vec!["hero", "faqs"]
+        );
+    }
+
+    #[test]
+    fn a_page_with_no_sections_yet_is_still_a_valid_file() {
+        let literal = page_literal("blank", "Blank", "/blank", &[]);
+        let source = format!("export const pageRegistry = [\n    {literal}\n];\n");
+
+        let built = pages(&ContentIndex::from_leaves(
+            crate::content::parser::parse_source(REGISTRY_FILE, &source).unwrap(),
+        ));
+        assert_eq!(built.len(), 1);
+        assert!(built[0].sections.is_empty());
+    }
+
+    #[test]
+    fn a_quote_in_a_title_does_not_break_the_file() {
+        // Titles are written into single-quoted literals. An apostrophe is
+        // ordinary in a conference title — "Chair's Welcome" — and would end
+        // the string early, leaving a site that will not build.
+        let literal = page_literal("welcome", "Chair's Welcome", "/welcome", &[]);
+        let source = format!("export const pageRegistry = [\n    {literal}\n];\n");
+
+        let built = pages(&ContentIndex::from_leaves(
+            crate::content::parser::parse_source(REGISTRY_FILE, &source).unwrap(),
+        ));
+        assert_eq!(built.len(), 1, "the file did not parse: {source}");
+        assert_eq!(built[0].title, "Chair's Welcome");
+    }
+
     /// The sample above is the shape this module expects. A real registry is
     /// hand-written and has commented-out sections, nested template literals
     /// in props and pages added over years — which is where an assumption
@@ -337,6 +527,96 @@ mod tests {
         // at, so an off-by-one here would rewrite the wrong page.
         let home = find(&index, "home").expect("no page with id 'home'");
         assert_eq!(home.sections_path(), format!("[{}].sections", home.index));
+    }
+
+    /// A new page, added to the real registry and the real menu.
+    ///
+    /// The menu half is the part worth doing on the real file: it is wrapped
+    /// in `listed([...])`, so it exercises whether a list behind a call can
+    /// actually be written to, not just read.
+    #[test]
+    fn creates_a_page_in_a_real_site_and_puts_it_in_the_menu() {
+        let Ok(project) = std::env::var("WEAVR_TEST_PROJECT") else {
+            eprintln!("skipped: set WEAVR_TEST_PROJECT to a conference site checkout");
+            return;
+        };
+        let source = std::path::Path::new(&project);
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("src/data")).unwrap();
+
+        for file in [REGISTRY_FILE, NAV_FILE] {
+            let Ok(text) = std::fs::read_to_string(source.join(file)) else {
+                eprintln!("skipped: no {file} in the test project");
+                return;
+            };
+            std::fs::write(root.join(file), text).unwrap();
+        }
+
+        let index = ContentIndex::build(root).unwrap();
+        let before = pages(&index);
+        let menu_before =
+            crate::content::parser::locate_array(
+                NAV_FILE,
+                &std::fs::read_to_string(root.join(NAV_FILE)).unwrap(),
+                NAV_EXPORT,
+                "",
+            )
+            .expect("the menu could not be read")
+            .elements
+            .len();
+        assert!(menu_before > 1, "the menu should have several entries");
+
+        let title = "Chair's Welcome";
+        let id = unique_slug(&index, &slug(title));
+        let path = format!("/{id}");
+        validate_new(&index, &id, &path).unwrap();
+
+        let kind = catalogue(&index).into_iter().next().expect("no section kinds");
+        crate::content::structure::insert_item(
+            root,
+            REGISTRY_FILE,
+            PAGES_EXPORT,
+            "",
+            before.len(),
+            &page_literal(&id, title, &path, &[kind.id.clone()]),
+        )
+        .unwrap();
+        crate::content::structure::insert_item(
+            root,
+            NAV_FILE,
+            NAV_EXPORT,
+            "",
+            menu_before,
+            &nav_literal(&id, title, &path),
+        )
+        .unwrap();
+
+        let after = pages(&ContentIndex::build(root).unwrap());
+        assert_eq!(after.len(), before.len() + 1);
+
+        let created = find(&ContentIndex::build(root).unwrap(), &id).expect("the page is not there");
+        assert_eq!(created.title, title, "the apostrophe was not carried through");
+        assert_eq!(created.path, path);
+        assert_eq!(created.sections.len(), 1);
+        assert_eq!(created.sections[0].section_id, kind.id);
+
+        // Every page that was already there comes through untouched.
+        for page in &before {
+            let same = after.iter().find(|p| p.id == page.id).expect("a page went missing");
+            assert_eq!(same, page, "page '{}' changed", page.id);
+        }
+
+        let menu_after = crate::content::parser::locate_array(
+            NAV_FILE,
+            &std::fs::read_to_string(root.join(NAV_FILE)).unwrap(),
+            NAV_EXPORT,
+            "",
+        )
+        .expect("the menu no longer reads back")
+        .elements
+        .len();
+        assert_eq!(menu_after, menu_before + 1, "the page was not added to the menu");
     }
 
     /// End to end on the real file, because addressing is the whole risk here.
