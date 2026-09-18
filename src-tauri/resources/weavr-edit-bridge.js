@@ -166,6 +166,7 @@
         background: rgba(255, 255, 255, 0.09);
       }
       .weavr-btn-secondary:hover { background: rgba(255, 255, 255, 0.16); }
+      .weavr-popover-wide { width: 340px; }
       .weavr-popover-hint {
         margin: 8px 0 0;
         font-size: 10px;
@@ -327,17 +328,81 @@
       }
       .weavr-seam-add:hover { filter: brightness(1.1); transform: scale(1.08); }
       .weavr-catalogue {
-        display: flex;
-        flex-direction: column;
-        gap: 3px;
-        max-height: 220px;
+        /* Positioned so a card's offsetTop is measured against this list,
+           which is what decides whether it is in view. */
+        position: relative;
+        display: grid;
+        /* minmax(0, ...) or a column grows to fit its content, and the
+           content here is a section drawn at full desktop width. The cards
+           would each be sized by whatever happened to be inside them. */
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 5px;
+        max-height: 268px;
         margin-top: 8px;
         overflow-y: auto;
         /* A site has dozens of section kinds; the list scrolls rather than
            growing a popover taller than the window. */
         scrollbar-width: thin;
       }
-      .weavr-catalogue-item { flex: none; text-align: left; }
+      .weavr-catalogue-item {
+        flex: none;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        padding: 5px;
+        border: 0;
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.05);
+        text-align: left;
+        cursor: pointer;
+        transition: background-color 0.12s ease, box-shadow 0.12s ease;
+      }
+      .weavr-catalogue-item:hover {
+        background: rgba(255, 255, 255, 0.12);
+        box-shadow: 0 0 0 1.5px #e8a317;
+      }
+      .weavr-catalogue-name {
+        font: 500 11px/1.3 ui-sans-serif, system-ui, sans-serif;
+        color: #ece7e1;
+        padding: 0 2px 1px;
+      }
+      /* The card's window onto the section. Fixed height so the list stays a
+         tidy grid whatever the sections themselves are. */
+      .weavr-preview {
+        position: relative;
+        width: 100%;
+        height: 74px;
+        border-radius: 6px;
+        overflow: hidden;
+        background: #fff;
+        pointer-events: none;
+      }
+      .weavr-preview:not([data-weavr-loaded]):not([data-weavr-empty])::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(100deg, #efeae3 30%, #f8f5f1 50%, #efeae3 70%);
+        background-size: 200% 100%;
+        animation: weavr-shimmer 1.1s linear infinite;
+      }
+      @keyframes weavr-shimmer {
+        to { background-position: -200% 0; }
+      }
+      .weavr-preview[data-weavr-empty] {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(255, 255, 255, 0.04);
+        color: #8c837a;
+        font: 500 10px/1 ui-sans-serif, system-ui, sans-serif;
+      }
+      /* The section itself, drawn at the width it was designed for and scaled
+         down. Anything reacting to the pointer is inert: this is a picture. */
+      .weavr-preview-stage {
+        transform-origin: top left;
+        pointer-events: none;
+      }
       .weavr-tool-select {
         height: 26px;
         max-width: 92px;
@@ -1850,10 +1915,123 @@
   let catalogue = [];
   let picker = null;
 
+  /*
+      Previews of what can be added.
+
+      Nothing is drawn or mocked up. Weavr says which page already shows each
+      kind of section, and the real one is taken from that page: what the
+      catalogue shows is what would actually be added, and cannot drift from it
+      as the site changes.
+
+      The page is loaded in a hidden frame and the matching section copied out
+      of it. Both documents are the same site, so the copy lands among the
+      stylesheets that styled it and needs nothing else to look right. One
+      frame is reused for all of them and the pages are fetched one at a time,
+      because a catalogue of forty sections would otherwise open forty pages at
+      once.
+  */
+  const SAMPLE_WIDTH = 1280;
+  /** Sections already copied out, by kind. These outlive the frame. */
+  const previewCache = new Map();
+  /** Pages currently loaded, by path. These do not: a document dies with it. */
+  let sampleDocs = new Map();
+  let sampleFrame = null;
+  let sampleQueue = Promise.resolve();
+
+  function loadSample(path) {
+    if (sampleDocs.has(path)) return Promise.resolve(sampleDocs.get(path));
+
+    sampleQueue = sampleQueue.then(
+      () =>
+        new Promise((resolve) => {
+          if (sampleDocs.has(path)) return resolve(sampleDocs.get(path));
+
+          if (!sampleFrame || !sampleFrame.isConnected) {
+            sampleFrame = document.createElement("iframe");
+            // Off-screen rather than hidden: a frame with `display: none` has
+            // no layout, and a section with no size cannot be scaled to fit.
+            sampleFrame.setAttribute("aria-hidden", "true");
+            sampleFrame.style.cssText = `position:fixed;left:-20000px;top:0;width:${SAMPLE_WIDTH}px;height:2400px;border:0;visibility:hidden;pointer-events:none`;
+            document.body.appendChild(sampleFrame);
+          }
+
+          let settled = false;
+          const done = (doc) => {
+            if (settled) return;
+            settled = true;
+            sampleDocs.set(path, doc);
+            resolve(doc);
+          };
+
+          sampleFrame.onload = () => {
+            // The site renders after load, so give it a moment to put the
+            // sections on the page before looking for one.
+            setTimeout(() => {
+              try {
+                done(sampleFrame.contentDocument);
+              } catch {
+                // A cross-origin frame cannot be read from. Nothing to preview,
+                // and nothing broken — the names still work.
+                done(null);
+              }
+            }, 350);
+          };
+          // Never leave the queue stuck behind a page that will not load.
+          setTimeout(() => done(null), 6000);
+          sampleFrame.src = path;
+        }),
+    );
+    return sampleQueue;
+  }
+
+  /** Copies the real section out of a loaded page, scaled to fit a card. */
+  async function fillPreview(box, kind) {
+    if (!kind.sample_path) return;
+
+    let copy = previewCache.get(kind.id);
+    if (!copy) {
+      const doc = await loadSample(kind.sample_path);
+      if (!doc) return;
+
+      const found = doc.querySelector(`[data-weavr-section-id="${CSS.escape(kind.id)}"]`);
+      // The wrapper carrying the attribute is `display: contents`, so the
+      // child is the thing with a box.
+      const source = found?.children?.[0] || found;
+      if (!source) return;
+
+      copy = document.importNode(source, true);
+      // Ids are unique to a document and this one already holds the original's.
+      // Duplicates would break in-page anchors and any styling that selects on
+      // them — including the site's own.
+      copy.removeAttribute?.("id");
+      for (const node of copy.querySelectorAll?.("[id]") || []) node.removeAttribute("id");
+      previewCache.set(kind.id, copy);
+    }
+
+    if (!box.isConnected) return;
+
+    const stage = document.createElement("div");
+    stage.className = "weavr-preview-stage";
+    stage.style.width = `${SAMPLE_WIDTH}px`;
+    stage.style.transform = `scale(${box.clientWidth / SAMPLE_WIDTH})`;
+    // Cloned again on the way in, so the cached copy is never handed to a card
+    // that is about to be thrown away with the rest of the list.
+    stage.appendChild(copy.cloneNode(true));
+
+    box.replaceChildren(stage);
+    box.dataset.weavrLoaded = "1";
+  }
+
   function closeCatalogue() {
     if (picker && picker.isConnected) picker.remove();
     picker = null;
     document.removeEventListener("mousedown", onCataloguePointerDown, true);
+    // The frame goes, and the documents with it — they belong to it and stop
+    // working the moment it is gone. The sections already copied out are kept,
+    // which is what makes reopening the catalogue instant.
+    if (sampleFrame && sampleFrame.isConnected) sampleFrame.remove();
+    sampleFrame = null;
+    sampleDocs = new Map();
   }
 
   function onCataloguePointerDown(event) {
@@ -1869,7 +2047,7 @@
     if (!pageId) return;
 
     picker = document.createElement("div");
-    picker.className = "weavr-popover";
+    picker.className = "weavr-popover weavr-popover-wide";
     picker.innerHTML = `
       <p class="weavr-popover-title">Add a section here</p>
       <input class="weavr-popover-input" type="search" placeholder="Search sections" />
@@ -1884,21 +2062,68 @@
     const list = picker.querySelector(".weavr-catalogue");
     const search = picker.querySelector(".weavr-popover-input");
 
+    /*
+        Only what is on screen is loaded. A catalogue of forty sections is
+        forty page loads if they are all fetched at once, and most are scrolled
+        past without being looked at.
+
+        Worked out from the list's own scroll position rather than with an
+        IntersectionObserver. Observers deliver on the rendering lifecycle, and
+        this page spends much of its life occluded by the Weavr panel — where
+        that lifecycle stops and the callbacks simply never arrive. The same
+        trap as requestAnimationFrame, which the editable scan avoids for the
+        same reason. Arithmetic keeps working when nothing is being painted.
+    */
+    const MARGIN = 140;
+    const loadVisible = () => {
+      const from = list.scrollTop - MARGIN;
+      const to = list.scrollTop + list.clientHeight + MARGIN;
+
+      for (const box of list.querySelectorAll(
+        ".weavr-preview:not([data-weavr-loaded]):not([data-weavr-empty]):not([data-weavr-pending])",
+      )) {
+        const top = box.offsetTop;
+        if (top + box.offsetHeight < from || top > to) continue;
+        box.dataset.weavrPending = "1";
+        fillPreview(box, JSON.parse(box.dataset.weavrKindJson));
+      }
+    };
+    list.addEventListener("scroll", loadVisible);
+
     const render = (term) => {
       const needle = term.trim().toLowerCase();
       const shown = catalogue.filter(
         (kind) => !needle || readable(kind.id).toLowerCase().includes(needle),
       );
+
       list.replaceChildren(
         ...shown.map((kind) => {
-          const button = document.createElement("button");
-          button.type = "button";
-          button.className = "weavr-btn weavr-btn-secondary weavr-catalogue-item";
-          button.textContent = readable(kind.id);
-          button.dataset.weavrKind = kind.id;
-          return button;
+          const card = document.createElement("button");
+          card.type = "button";
+          card.className = "weavr-catalogue-item";
+          card.dataset.weavrKind = kind.id;
+
+          const box = document.createElement("div");
+          box.className = "weavr-preview";
+          box.dataset.weavrKindJson = JSON.stringify(kind);
+          if (!kind.sample_path) {
+            // Nowhere on the site shows one yet, so there is nothing to show.
+            // Said plainly rather than left as an empty frame that reads as
+            // still loading.
+            box.dataset.weavrEmpty = "1";
+            box.textContent = "Not used yet";
+          }
+
+          const name = document.createElement("span");
+          name.className = "weavr-catalogue-name";
+          name.textContent = readable(kind.id);
+
+          card.append(box, name);
+          return card;
         }),
       );
+
+      loadVisible();
     };
 
     list.addEventListener("click", (event) => {
@@ -1917,18 +2142,31 @@
       if (event.target !== search) event.preventDefault();
     });
 
-    render("");
+    // Into the document before the cards are made, not after. The previews
+    // load when a card scrolls into view, and nothing is ever in view inside
+    // a list that is not yet on the page — so every preview would sit waiting
+    // for a moment that had already passed.
     document.body.appendChild(picker);
+    render("");
 
     const box = seam.getBoundingClientRect();
-    const width = 288;
+    // Measured rather than assumed: it is in the document by now, and a width
+    // written here in two places is one that eventually disagrees with the CSS.
+    const width = picker.offsetWidth || 340;
     const height = picker.offsetHeight || 220;
     const viewportW = document.documentElement.clientWidth;
     const viewportH = document.documentElement.clientHeight;
     const left = Math.min(Math.max(8, box.left + box.width / 2 - width / 2), viewportW - width - 8);
     const below = box.bottom + 8;
+    const preferred = below + height > viewportH ? box.top - height - 8 : below;
+
+    // Clamped into the viewport, not merely flipped above the seam. A seam far
+    // down a long page sits below the fold, and both the space under it and
+    // the space over it are off-screen — the popover would open somewhere
+    // nobody can see it, and the previews inside it would never load, because
+    // nothing is ever in view inside a box that is not.
     picker.style.left = `${left}px`;
-    picker.style.top = `${below + height > viewportH ? Math.max(8, box.top - height - 8) : below}px`;
+    picker.style.top = `${Math.min(Math.max(8, preferred), Math.max(8, viewportH - height - 8))}px`;
 
     document.addEventListener("mousedown", onCataloguePointerDown, true);
     search.focus();

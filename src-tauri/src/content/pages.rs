@@ -32,6 +32,16 @@ pub struct SectionKind {
     pub id: String,
     /// The React component behind it, for labelling the catalogue.
     pub component: String,
+    /// A page that already shows this kind, if any does.
+    ///
+    /// The catalogue uses it to show what a section actually looks like
+    /// instead of only naming it. Nothing is drawn or mocked up: the site
+    /// renders the page at this address and the real section is taken from it,
+    /// so the preview cannot drift from what would be added.
+    ///
+    /// None for a kind the site can render but no page currently uses. There
+    /// is nowhere to see one, so it is offered by name alone.
+    pub sample_path: Option<String>,
 }
 
 /// How a section is presented, as opposed to what it says.
@@ -202,12 +212,29 @@ pub fn catalogue(index: &ContentIndex) -> Vec<SectionKind> {
         }
     }
 
+    // Where each kind can be seen, so the catalogue can show one rather than
+    // only name it. The first page that uses it wins; a section looks the same
+    // wherever it appears, so there is nothing to choose between them.
+    let sites = pages(index);
+    let sample_of = |section_id: &str| {
+        sites.iter().find_map(|page| {
+            page.sections
+                .iter()
+                .any(|section| section.section_id == section_id)
+                .then(|| page.path.clone())
+        })
+    };
+
     kinds
         .into_iter()
         // A manifest entry with no id cannot be added to a page: the id is the
         // whole of what gets written into the section list.
         .filter(|(id, _)| !id.is_empty())
-        .map(|(id, component)| SectionKind { id, component })
+        .map(|(id, component)| SectionKind {
+            sample_path: sample_of(&id),
+            id,
+            component,
+        })
         .collect()
 }
 
@@ -447,8 +474,16 @@ mod tests {
         assert_eq!(
             kinds,
             vec![
-                SectionKind { id: "hero".into(), component: "HeroSection".into() },
-                SectionKind { id: "faqsSection".into(), component: "FaqsSection".into() },
+                SectionKind {
+                    id: "hero".into(),
+                    component: "HeroSection".into(),
+                    sample_path: Some("/".into()),
+                },
+                SectionKind {
+                    id: "faqsSection".into(),
+                    component: "FaqsSection".into(),
+                    sample_path: Some("/".into()),
+                },
             ]
         );
     }
